@@ -1,105 +1,118 @@
 "use client";
 
-import {
-  formatHeartbeat,
-  isTrainOnline,
-  listTrains,
-} from "@/lib/services/trains";
-import type { TrainDoc } from "@/lib/types";
+import { formatHeartbeat, isTrainOnline } from "@/lib/services/trains";
+import { useTrains } from "@/lib/hooks/useTrains";
 import { cn } from "@/lib/utils";
-import { useEffect, useState } from "react";
 
 export default function MonitoringPage() {
-  const [trains, setTrains] = useState<TrainDoc[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let c = false;
-    (async () => {
-      try {
-        const t = await listTrains();
-        if (!c) setTrains(t);
-      } catch (e: unknown) {
-        if (!c) setErr(e instanceof Error ? e.message : "Failed");
-      } finally {
-        if (!c) setLoading(false);
-      }
-    })();
-    return () => {
-      c = true;
-    };
-  }, []);
+  const { trains, loading, error } = useTrains();
+  const onlineCount = trains.filter((t) => isTrainOnline(t.lastHeartbeat)).length;
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900">Monitoring</h1>
-        <p className="mt-1 text-slate-600">
-          Live view of train heartbeats (online if last heartbeat within 2 minutes)
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">Monitoring</h1>
+          <p className="mt-1 text-slate-500">
+            Live — online if heartbeat within 2 minutes
+          </p>
+        </div>
+        <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+          Live
+        </span>
       </div>
 
-      {err ? (
+      {/* Summary cards */}
+      {!loading && (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Total trains</p>
+            <p className="mt-1 text-3xl font-bold text-slate-900">{trains.length}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Online</p>
+            <p className="mt-1 text-3xl font-bold text-emerald-600">{onlineCount}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Total TVs</p>
+            <p className="mt-1 text-3xl font-bold text-blue-600">
+              {trains.reduce((s, t) => s + (t.connectedTvs?.length ?? 0), 0)}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {error ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {err}
+          {error}
         </p>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="space-y-4">
         {loading ? (
-          <p className="p-6 text-slate-500">Loading…</p>
+          <p className="text-sm text-slate-500">Connecting…</p>
+        ) : trains.length === 0 ? (
+          <p className="text-sm text-slate-500">No trains configured.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Train</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Last heartbeat</th>
-                  <th className="px-4 py-3 font-medium">Active playlist</th>
-                  <th className="px-4 py-3 font-medium">Connected TVs</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {trains.map((t) => {
-                  const online = isTrainOnline(t.lastHeartbeat);
-                  return (
-                    <tr key={t.id} className="bg-white">
-                      <td className="px-4 py-3 font-medium text-slate-900">{t.name}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={cn(
-                            "inline-flex rounded-full px-2 py-0.5 text-xs font-semibold",
-                            online
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-slate-100 text-slate-600",
-                          )}
-                        >
-                          {online ? "Online" : "Offline"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        {formatHeartbeat(t.lastHeartbeat)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        {t.activePlaylistTitle ?? "—"}
-                      </td>
-                      <td className="max-w-xs px-4 py-3 text-xs text-slate-600">
-                        {t.connectedTvs?.length
-                          ? t.connectedTvs.map((c) => c.name).join(", ")
-                          : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          trains.map((t) => {
+            const online = isTrainOnline(t.lastHeartbeat);
+            const tvs = t.connectedTvs ?? [];
+            return (
+              <div
+                key={t.id}
+                className={cn(
+                  "rounded-xl border bg-white p-5 shadow-sm",
+                  online ? "border-emerald-200" : "border-slate-200",
+                )}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <span className="text-base font-semibold text-slate-900">{t.name}</span>
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold",
+                        online
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-slate-100 text-slate-500",
+                      )}
+                    >
+                      {online && (
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                      )}
+                      {online ? "Online" : "Offline"}
+                    </span>
+                    {tvs.length > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                        📺 {tvs.length} TV{tvs.length > 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs text-slate-400">
+                    {formatHeartbeat(t.lastHeartbeat)}
+                  </span>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Playlist</p>
+                    <p className="mt-0.5 text-slate-700">{t.activePlaylistTitle ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400">TVs</p>
+                    <p className="mt-0.5 text-slate-700">
+                      {tvs.length > 0 ? tvs.map((c) => c.name).join(", ") : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Device ID</p>
+                    <p className="mt-0.5 font-mono text-xs text-slate-500">{t.id}</p>
+                  </div>
+                </div>
+              </div>
+            );
+          })
         )}
-        {!loading && trains.length === 0 ? (
-          <p className="p-6 text-slate-500">No trains configured.</p>
-        ) : null}
       </div>
     </div>
   );

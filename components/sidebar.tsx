@@ -7,11 +7,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/media", label: "Media" },
-  { href: "/playlists", label: "Playlists" },
-  { href: "/trains", label: "Trains" },
-  { href: "/monitoring", label: "Monitoring" },
+  { href: "/dashboard",  label: "Dashboard",  icon: "▦" },
+  { href: "/media",      label: "Media",       icon: "🎬" },
+  { href: "/playlists",  label: "Playlists",   icon: "≡" },
+  { href: "/trains",     label: "Trains",      icon: "🚂" },
+  { href: "/monitoring", label: "Monitoring",  icon: "📡" },
 ] as const;
 
 export function Sidebar() {
@@ -19,37 +19,47 @@ export function Sidebar() {
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
-      <div className="border-b border-slate-100 px-4 py-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+      {/* Logo */}
+      <div className="border-b border-slate-100 px-5 py-5">
+        <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
           VillageTrain
         </p>
-        <p className="text-lg font-bold text-slate-900">Signage Admin</p>
+        <p className="mt-0.5 text-lg font-bold leading-tight text-slate-900">
+          Signage Admin
+        </p>
       </div>
-      <nav className="flex flex-1 flex-col gap-1 p-3">
+
+      {/* Nav */}
+      <nav className="flex flex-1 flex-col gap-0.5 p-3">
         {NAV.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const active =
+            pathname === item.href || pathname.startsWith(`${item.href}/`);
           return (
             <Link
               key={item.href}
               href={item.href}
               className={cn(
-                "rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 active
                   ? "bg-brand-50 text-brand-900"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
               )}
             >
+              <span className="w-4 text-center text-base leading-none">{item.icon}</span>
               {item.label}
             </Link>
           );
         })}
       </nav>
+
+      {/* Sign out */}
       <div className="border-t border-slate-100 p-3">
         <button
           type="button"
           onClick={() => signOut(getFirebaseAuth())}
-          className="w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900"
         >
+          <span className="w-4 text-center">↩</span>
           Sign out
         </button>
       </div>

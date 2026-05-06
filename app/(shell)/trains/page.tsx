@@ -6,52 +6,36 @@ import {
   deleteTrain,
   formatHeartbeat,
   isTrainOnline,
-  listTrains,
+  renameTrain,
 } from "@/lib/services/trains";
 import { listPlaylists } from "@/lib/services/playlists";
-import type { PlaylistDoc, TrainDoc } from "@/lib/types";
+import { useTrains } from "@/lib/hooks/useTrains";
+import type { PlaylistDoc } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 
 export default function TrainsPage() {
-  const [trains, setTrains] = useState<TrainDoc[]>([]);
+  const { trains, loading, error: liveError } = useTrains();
   const [playlists, setPlaylists] = useState<PlaylistDoc[]>([]);
-  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
-
-  async function refresh() {
-    setErr(null);
-    const [t, p] = await Promise.all([listTrains(), listPlaylists()]);
-    setTrains(t);
-    setPlaylists(p);
-  }
+  // rename state: trainId → draft name
+  const [renaming, setRenaming] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    let c = false;
-    (async () => {
-      try {
-        await refresh();
-      } catch (e: unknown) {
-        if (!c) setErr(e instanceof Error ? e.message : "Failed");
-      } finally {
-        if (!c) setLoading(false);
-      }
-    })();
-    return () => {
-      c = true;
-    };
+    listPlaylists().then(setPlaylists).catch(() => null);
   }, []);
+
+  const displayError = liveError ?? err;
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setErr(null);
     try {
-      await createTrain(newName || "New train");
+      await createTrain(newName.trim() || "New train");
       setNewName("");
-      await refresh();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Create failed");
     } finally {
@@ -61,24 +45,31 @@ export default function TrainsPage() {
 
   async function onAssign(trainId: string, playlistId: string) {
     setErr(null);
-    const pl =
-      playlistId === ""
-        ? null
-        : playlists.find((p) => p.id === playlistId) ?? null;
+    const pl = playlistId === "" ? null : playlists.find((p) => p.id === playlistId) ?? null;
     try {
       await assignPlaylistToTrain(trainId, pl?.id ?? null, pl?.title ?? null);
-      await refresh();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Assign failed");
     }
   }
 
+  async function onRename(trainId: string) {
+    const name = renaming[trainId]?.trim();
+    if (!name) return;
+    setErr(null);
+    try {
+      await renameTrain(trainId, name);
+      setRenaming((r) => { const n = { ...r }; delete n[trainId]; return n; });
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Rename failed");
+    }
+  }
+
   async function onDelete(id: string, name: string) {
-    if (!confirm(`Delete train “${name}”?`)) return;
+    if (!confirm(`Delete train "${name}"?`)) return;
     setErr(null);
     try {
       await deleteTrain(id);
-      await refresh();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Delete failed");
     }
@@ -86,27 +77,34 @@ export default function TrainsPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900">Trains</h1>
-        <p className="mt-1 text-slate-600">Assign active playlists and monitor connectivity</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">Trains</h1>
+          <p className="mt-1 text-slate-500">Assign playlists and monitor connectivity in real-time</p>
+        </div>
+        <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+          Live
+        </span>
       </div>
 
-      {err ? (
+      {displayError ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {err}
+          {displayError}
         </p>
       ) : null}
 
+      {/* Add train */}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Add train</h2>
-        <form onSubmit={onCreate} className="mt-4 flex flex-wrap items-end gap-4">
+        <h2 className="text-base font-semibold text-slate-900">Add train</h2>
+        <form onSubmit={onCreate} className="mt-4 flex flex-wrap items-end gap-3">
           <div className="min-w-[200px] flex-1">
             <label className="block text-sm font-medium text-slate-700">Name</label>
             <input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="e.g. Train A"
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="e.g. Train 1 Lesvos"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           </div>
           <button
@@ -119,84 +117,143 @@ export default function TrainsPage() {
         </form>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-6 py-4">
-          <h2 className="text-lg font-semibold text-slate-900">All trains</h2>
-        </div>
+      {/* Train list */}
+      <div className="space-y-4">
         {loading ? (
-          <p className="p-6 text-slate-500">Loading…</p>
+          <p className="text-sm text-slate-500">Connecting…</p>
+        ) : trains.length === 0 ? (
+          <p className="text-sm text-slate-500">No trains yet.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Name</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Last heartbeat</th>
-                  <th className="px-4 py-3 font-medium">Active playlist</th>
-                  <th className="px-4 py-3 font-medium">TVs</th>
-                  <th className="px-4 py-3 font-medium" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {trains.map((t) => {
-                  const online = isTrainOnline(t.lastHeartbeat);
-                  return (
-                    <tr key={t.id} className="bg-white">
-                      <td className="px-4 py-2 font-medium text-slate-900">{t.name}</td>
-                      <td className="px-4 py-2">
-                        <span
-                          className={cn(
-                            "inline-flex rounded-full px-2 py-0.5 text-xs font-semibold",
-                            online
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-slate-100 text-slate-600",
-                          )}
-                        >
-                          {online ? "Online" : "Offline"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-slate-600">
-                        {formatHeartbeat(t.lastHeartbeat)}
-                      </td>
-                      <td className="px-4 py-2">
-                        <select
-                          value={t.activePlaylistId ?? ""}
-                          onChange={(e) => onAssign(t.id, e.target.value)}
-                          className="max-w-[220px] rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                        >
-                          <option value="">— None —</option>
-                          {playlists.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.title}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="max-w-[200px] px-4 py-2 text-xs text-slate-600">
-                        {t.connectedTvs?.length
-                          ? t.connectedTvs.map((c) => c.name).join(", ")
-                          : "—"}
-                      </td>
-                      <td className="px-4 py-2">
+          trains.map((t) => {
+            const online = isTrainOnline(t.lastHeartbeat);
+            const tvCount = t.connectedTvs?.length ?? 0;
+            const isRenaming = renaming[t.id] !== undefined;
+
+            return (
+              <div
+                key={t.id}
+                className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  {/* Name + status */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    {isRenaming ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          autoFocus
+                          value={renaming[t.id]}
+                          onChange={(e) =>
+                            setRenaming((r) => ({ ...r, [t.id]: e.target.value }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void onRename(t.id);
+                            if (e.key === "Escape")
+                              setRenaming((r) => { const n = { ...r }; delete n[t.id]; return n; });
+                          }}
+                          className="rounded-lg border border-brand-400 px-2 py-1 text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
                         <button
                           type="button"
-                          onClick={() => onDelete(t.id, t.name)}
-                          className="text-sm font-medium text-red-600 hover:text-red-800"
+                          onClick={() => void onRename(t.id)}
+                          className="rounded-md bg-brand-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-900"
                         >
-                          Delete
+                          Save
                         </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRenaming((r) => { const n = { ...r }; delete n[t.id]; return n; })
+                          }
+                          className="text-xs text-slate-500 hover:text-slate-700"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        title="Click to rename"
+                        onClick={() => setRenaming((r) => ({ ...r, [t.id]: t.name }))}
+                        className="text-base font-semibold text-slate-900 hover:text-brand-700"
+                      >
+                        {t.name}
+                        <span className="ml-1.5 text-xs font-normal text-slate-400">✎</span>
+                      </button>
+                    )}
+
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold",
+                        online
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-slate-100 text-slate-500",
+                      )}
+                    >
+                      {online && (
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                      )}
+                      {online ? "Online" : "Offline"}
+                    </span>
+
+                    {tvCount > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                        📺 {tvCount} TV{tvCount > 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => void onDelete(t.id, t.name)}
+                    className="text-xs font-medium text-slate-400 hover:text-red-600"
+                  >
+                    Delete
+                  </button>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-6 text-sm text-slate-600">
+                  <div>
+                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                      Last heartbeat
+                    </span>
+                    <p className="mt-0.5">{formatHeartbeat(t.lastHeartbeat)}</p>
+                  </div>
+
+                  <div>
+                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                      Active playlist
+                    </span>
+                    <div className="mt-0.5">
+                      <select
+                        value={t.activePlaylistId ?? ""}
+                        onChange={(e) => void onAssign(t.id, e.target.value)}
+                        className="rounded-lg border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      >
+                        <option value="">— None —</option>
+                        {playlists.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {tvCount > 0 && (
+                    <div>
+                      <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                        Connected TVs
+                      </span>
+                      <p className="mt-0.5 text-xs">
+                        {t.connectedTvs.map((c) => c.name).join(", ")}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })
         )}
-        {!loading && trains.length === 0 ? (
-          <p className="p-6 text-slate-500">No trains yet.</p>
-        ) : null}
       </div>
     </div>
   );

@@ -62,6 +62,11 @@ export async function assignPlaylistToTrain(
   });
 }
 
+export async function renameTrain(id: string, name: string): Promise<void> {
+  const db = getDb();
+  await updateDoc(doc(db, COL, id), { name: name.trim() || "Train" });
+}
+
 export async function deleteTrain(id: string): Promise<void> {
   const db = getDb();
   await deleteDoc(doc(db, COL, id));
