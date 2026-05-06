@@ -1,47 +1,154 @@
-# VillageTrain Signage Admin
+# VillageTrain Signage — Cloud Server
 
-Local-first admin web app for digital signage: **media uploads**, **playlists**, **train assignment**, and **basic monitoring**. Built with **Next.js (App Router)**, **TypeScript**, **Tailwind CSS**, and **Firebase** (Auth, Firestore, Storage).
+Admin web app για digital signage: **media uploads**, **playlists**, **trains**, **monitoring** και **real-time control**.
+Built with **Next.js (App Router)**, **TypeScript**, **Tailwind CSS**, **Firebase** (Auth, Firestore, Storage).
 
-## Prerequisites
+Production: **https://signage.villagetrain.gr**
 
-- Node.js 20+
-- A Firebase project with **Authentication** (Email/Password), **Firestore**, and **Storage** enabled
+---
 
-## Quick start
+## Ροή εργασίας (καθημερινή χρήση)
+
+### 1. Κάνω αλλαγές στον κώδικα (local dev)
 
 ```bash
-cd SignageCloudServer
-cp .env.local.example .env.local
-# Edit .env.local — paste your Firebase web app config (all NEXT_PUBLIC_* vars)
+# Πρώτα δοκιμή local
+npm run dev            # http://localhost:3000
+
+# Όταν είναι OK → commit & push στο GitHub
+git add -A
+git commit -m "περιγραφή αλλαγής"
+git push origin main
+```
+
+### 2. Deploy στον VPS (μετά από κάθε push)
+
+```bash
+# SSH στον server
+ssh root@<vps-ip>
+
+# Πήγαινε στο φάκελο
+cd /var/www/signage   # ή όπου έχεις κάνει clone
+
+# Κατέβασε τις αλλαγές
+git pull origin main
+
+# Εγκατάσταση τυχόν νέων dependencies
 npm install
-npm run dev
+
+# Build (ΑΠΑΡΑΙΤΗΤΟ μετά από κάθε αλλαγή κώδικα)
+npm run build
+
+# Επανεκκίνηση με pm2
+pm2 restart signage   # ή το όνομα που έχεις δώσει στο pm2
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Unauthenticated users are sent to `/login`.
-
-Production build:
+### 3. Πρώτη εγκατάσταση στον VPS
 
 ```bash
+# Clone
+git clone https://github.com/christosal/SignageCloudServer.git /var/www/signage
+cd /var/www/signage
+
+# Environment variables
+cp .env.local.example .env.local
+nano .env.local        # βάλε τα Firebase keys (δες παρακάτω)
+
+# Install & build
+npm install
 npm run build
-npm start
+
+# Εκκίνηση με pm2
+pm2 start npm --name signage -- start
+pm2 save               # να ξεκινά αυτόματα μετά από reboot
+pm2 startup            # ακολούθα τις οδηγίες που εμφανίζει
 ```
 
-## Connect Firebase
+---
 
-1. In [Firebase Console](https://console.firebase.google.com/), create or open your project.
-2. **Project settings → General → Your apps → Web** — register an app and copy the config values.
-3. Paste them into **`.env.local`** (never commit `.env.local`; use `.env.local.example` only as a template).
-4. **Authentication → Sign-in method**: enable **Email/Password**.
-5. **Firestore Database**: create database (production mode is fine once rules are set).
-6. **Storage**: click Get started and create the default bucket.
+## Environment variables (`.env.local`)
 
-### Security rules (MVP: authenticated admin only)
+```env
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+```
 
-Until you need public read for players, restrict Firestore and Storage to signed-in users:
+Τις βρίσκεις στο **Firebase Console → Project settings → General → Your apps → Web app → Config**.
 
-**Firestore**
+> **Ποτέ μην κάνεις commit το `.env.local`** — περιέχει API keys. Το `.env.local.example` είναι το μόνο που μπαίνει στο git.
 
-```text
+---
+
+## Χρήσιμες pm2 εντολές
+
+```bash
+pm2 list                  # δες όλα τα processes
+pm2 logs signage          # live logs
+pm2 logs signage --lines 100  # τελευταίες 100 γραμμές
+pm2 restart signage       # επανεκκίνηση
+pm2 stop signage          # σταμάτημα
+pm2 status                # status overview
+```
+
+---
+
+## Σελίδες & λειτουργίες
+
+| Σελίδα | Λειτουργία |
+|---|---|
+| **Dashboard** | Overview: αριθμός media, playlists, trains online |
+| **Media** | Upload videos/images. Announcements οργανώνονται σε folders (subcategory). Διαγραφή με cascade αφαίρεση από playlists. |
+| **Playlists** | Δημιουργία/επεξεργασία playlists. Drag & drop σειρά items. |
+| **Trains** | Assign playlist σε train. Rename. "⏳ Waiting Screen" για να σταματήσει το playback. Live status badge. |
+| **Monitoring** | Live status όλων των trains: online/offline, TVs, τι παίζει τώρα. |
+
+---
+
+## Media — Announcements & Folders
+
+Τα announcements οργανώνονται σε **1 επίπεδο folder** (subcategory):
+
+1. Πήγαινε στο **Media**
+2. Επέλεξε category = `announcements`
+3. Στο πεδίο **Folder** γράψε το όνομα (π.χ. `castle`, `stops`)
+4. Το autocomplete δείχνει ήδη υπάρχοντα folders
+
+Τα folders εμφανίζονται αυτόματα στο **control panel** του local server ομαδοποιημένα.
+
+---
+
+## Trains & Pis
+
+Κάθε train = ένα Pi που τρέχει τον **SignageLocalServer**.
+
+- Το Pi **αυτο-εγγράφεται** στο Firestore μόλις ξεκινήσει (αν δεν υπάρχει ήδη)
+- Από τη σελίδα **Trains** ορίζεις ποιο playlist παίζει κάθε train
+- Το Pi λαμβάνει την αλλαγή **real-time** μέσω `onSnapshot` (χωρίς polling)
+- **Online** = heartbeat εντός 2 λεπτών
+- **⏳ Waiting Screen**: στέλνει εντολή στο Pi να εμφανίσει την αναμονή (το μπλε με λογότυπο)
+
+### Για να ορίσεις Waiting Screen από cloud:
+1. **Trains** → βρες το train
+2. Κουμπί **"⏳ Waiting Screen"** (εμφανίζεται μόνο αν είναι online)
+3. Το Pi λαμβάνει την εντολή και τη μεταδίδει στις TVs
+
+---
+
+## Πρώτη ρύθμιση Firebase
+
+1. **Firebase Console → Authentication → Sign-in method** → ενεργοποίησε **Email/Password**
+2. **Authentication → Users → Add user** → δημιούργησε admin χρήστη
+3. **Firestore Database** → Create database
+4. **Storage** → Get started
+
+### Security rules (για admin-only access)
+
+**Firestore:**
+```
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -52,9 +159,8 @@ service cloud.firestore {
 }
 ```
 
-**Storage**
-
-```text
+**Storage:**
+```
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
@@ -65,83 +171,37 @@ service firebase.storage {
 }
 ```
 
-Tighten these before exposing media URLs to untrusted clients (e.g. public read for playback hosts only).
+---
 
-### Firestore indexes
+## Firestore collections
 
-If the console prompts for a composite index when ordering **playlists** by `updatedAt`, create the suggested index. Single-field indexes on `createdAt` / `updatedAt` are usually created automatically.
-
-## Create the first admin user
-
-1. Firebase Console → **Authentication → Users → Add user**.
-2. Enter email and password → **Add user**.
-3. Run the app, go to `/login`, and sign in with that email/password.
-
-## Test the app
-
-1. **Media**: upload a video or image; set category; for images set duration (default 6s). Open the preview thumbnail.
-2. **Playlists**: create a playlist, open it, add media from the library, reorder with up/down arrows, **Save playlist**.
-3. **Trains**: add a train; assign an **active playlist** from the dropdown.
-4. **Monitoring**: see all trains; **Online** means `lastHeartbeat` is within the last **2 minutes** (see `lib/constants.ts`). Until field devices write heartbeats to Firestore, trains will show **Offline**.
-
-## Data model (collections)
-
-| Collection   | Purpose |
-|-------------|---------|
-| `media`     | Metadata + `storagePath`, `downloadUrl`, `mediaType`, `category`, `duration` (images). |
-| `playlists` | `title`, `loop`, `items[]` with `mediaId`, `title`, `mediaType`, `downloadUrl`, `duration`. |
-| `trains`    | `name`, `activePlaylistId`, `activePlaylistTitle`, `status`, `lastHeartbeat`, `connectedTvs[]`, `createdAt`. |
-
-## Project layout
-
-- `app/login` — email/password sign-in
-- `app/(shell)/*` — sidebar layout + protected pages (`dashboard`, `media`, `playlists`, `trains`, `monitoring`)
-- `lib/firebase/client.ts` — Firebase init from env
-- `lib/services/*` — Firestore + Storage helpers (client-side only; no API routes needed)
-
-## Secrets
-
-Do **not** commit real API keys. If keys were ever exposed in git or chat, rotate them in the Google Cloud / Firebase console.
-
-## Train to Pi sync (real-time)
-
-Each Pi connects **directly to Firestore** via `firebase-admin` and watches its own train document in real-time (`onSnapshot`). No polling, no custom API on this server — the admin sets a playlist on a train, and the right Pi picks it up instantly.
-
-### Setup per Pi (SignageLocalServer)
-
-1. **Firebase Console → Project settings → Service accounts → Generate new private key** — download JSON.
-2. Set in the Pi's environment:
-
-   ```
-   FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}   # full JSON as one line
-   ```
-
-3. The Pi identifies itself via `trainId` in **`data/config.json`** — this must equal the Firestore document id in the **`trains`** collection (visible in Firebase Console or the Trains page).
-   Override without editing the file: `CLOUD_TRAIN_DOC_ID=<firestoreDocId>`.
-
-### Two trains, two Pis
-
-Each Pi points to a **different** Firestore train document. They are fully independent.
-
-### Manual re-sync (from the Pi)
-
-```bash
-curl -X POST http://localhost:3000/api/sync-cloud
-```
-
-### What happens on sync
-
-1. Pi reads `trains/{trainId}.activePlaylistId`.
-2. Fetches `playlists/{id}` and each `media/{id}` document.
-3. Downloads missing files from Firebase Storage `downloadUrl` into local `/media/...`.
-4. Writes `data/media.json`, `data/playlists.json`, `data/activePlaylist.json`.
-5. Broadcasts `PLAY_PLAYLIST` to connected TVs via WebSocket.
-
-## Roadmap
-
-- Heartbeat write-back from Pi to Firestore (for the monitoring page)
-- Versioning and audit logs
+| Collection | Περιεχόμενο |
+|---|---|
+| `media` | `title`, `mediaType`, `category`, `subcategory?`, `storagePath`, `downloadUrl`, `filename`, `duration` |
+| `playlists` | `title`, `loop`, `items[]` (`mediaId`, `title`, `mediaType`, `downloadUrl`, `duration`) |
+| `trains` | `name`, `activePlaylistId`, `activePlaylistTitle`, `status`, `lastHeartbeat`, `connectedTvs[]`, `pendingCommand?`, `currentState?`, `createdAt` |
 
 ---
 
-**VillageTrain** — signage admin for `localhost:3000` and production at `https://signage.villagetrain.gr`.
+## Project structure
+
+```
+app/
+  login/          → σελίδα login
+  (shell)/
+    dashboard/    → overview
+    media/        → media library
+    playlists/    → list playlists
+    playlists/[id]/ → edit playlist
+    trains/       → train management
+    monitoring/   → live monitoring
+lib/
+  firebase/       → Firebase client init
+  hooks/          → useTrains (real-time onSnapshot)
+  services/       → Firestore + Storage helpers
+  types.ts        → TypeScript types
+```
+
+---
+
+**VillageTrain** · signage.villagetrain.gr
