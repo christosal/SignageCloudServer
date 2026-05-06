@@ -10,8 +10,8 @@ import {
   updateDoc,
   type Timestamp,
 } from "firebase/firestore";
-import { ONLINE_THRESHOLD_MS } from "@/lib/constants";
 import { getDb } from "@/lib/firebase/client";
+import { ONLINE_THRESHOLD_MS } from "@/lib/constants";
 import type { TrainDoc } from "@/lib/types";
 
 const COL = "trains";
@@ -76,6 +76,17 @@ export async function deleteTrain(id: string): Promise<void> {
 export async function sendWaitingScreen(trainId: string): Promise<void> {
   const db = getDb();
   await updateDoc(doc(db, COL, trainId), { pendingCommand: "WAITING_SCREEN" });
+}
+
+/** Broadcast a sync command to all online trains (used after media/playlist changes). */
+export async function sendSyncCommandToAllTrains(
+  command: "SYNC_PLAYLIST" | "SYNC_ANNOUNCEMENTS",
+): Promise<void> {
+  const db = getDb();
+  const snap = await getDocs(collection(db, COL));
+  await Promise.all(
+    snap.docs.map((d) => updateDoc(doc(db, COL, d.id), { pendingCommand: command })),
+  );
 }
 
 export function formatHeartbeat(ts: Timestamp | null | undefined): string {

@@ -1,8 +1,17 @@
 "use client";
 
 import { MEDIA_CATEGORIES, type MediaCategory } from "@/lib/constants";
-import { deleteMedia, detectMediaType, formatCreatedAt, listMedia, uploadMedia } from "@/lib/services/media";
-import type { MediaDoc } from "@/lib/types";
+import {
+  deleteMedia,
+  deleteMediaCascade,
+  detectMediaType,
+  findPlaylistsContainingMedia,
+  formatCreatedAt,
+  listMedia,
+  uploadMedia,
+} from "@/lib/services/media";
+import { sendSyncCommandToAllTrains } from "@/lib/services/trains";
+import type { MediaDoc, PlaylistDoc } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
 
@@ -24,6 +33,11 @@ export default function MediaPage() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [preview, setPreview] = useState<MediaDoc | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    item: MediaDoc;
+    playlists: PlaylistDoc[];
+  } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
@@ -73,10 +87,37 @@ export default function MediaPage() {
   }
 
   async function onDelete(m: MediaDoc) {
-    if (!confirm(`Delete "${m.title}"?`)) return;
     setErr(null);
-    try { await deleteMedia(m); await refresh(); }
-    catch (e: unknown) { setErr(e instanceof Error ? e.message : "Delete failed"); }
+    try {
+      const playlists = await findPlaylistsContainingMedia(m.id);
+      setDeleteTarget({ item: m, playlists });
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Check failed");
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    setErr(null);
+    try {
+      const { item, playlists } = deleteTarget;
+      if (playlists.length > 0) {
+        await deleteMediaCascade(item, playlists);
+      } else {
+        await deleteMedia(item);
+        // Announce deletion to Pis (for announcements)
+        if (item.category === "announcements") {
+          await sendSyncCommandToAllTrains("SYNC_ANNOUNCEMENTS").catch(() => null);
+        }
+      }
+      setDeleteTarget(null);
+      await refresh();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeleteBusy(false);
+    }
   }
 
   // Group items by category / subcategory for display
@@ -243,6 +284,67 @@ export default function MediaPage() {
         </p>
       )}
       {loading && <p className="text-sm text-slate-500">Loading…</p>}
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal
+          onClick={() => !deleteBusy && setDeleteTarget(null)}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-100 px-6 py-4">
+              <p className="text-base font-bold text-slate-900">
+                {deleteTarget.playlists.length > 0 ? "⚠️ File is in active playlists" : "Delete file"}
+              </p>
+            </div>
+            <div className="space-y-3 px-6 py-4 text-sm text-slate-700">
+              <p>
+                Delete <span className="font-semibold text-slate-900">&ldquo;{deleteTarget.item.title}&rdquo;</span>?
+              </p>
+              {deleteTarget.playlists.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
+                  <p className="font-semibold">Used in {deleteTarget.playlists.length} playlist{deleteTarget.playlists.length > 1 ? "s" : ""}:</p>
+                  <ul className="mt-1 list-inside list-disc text-sm">
+                    {deleteTarget.playlists.map((pl) => (
+                      <li key={pl.id}>{pl.title}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs">
+                    The file will be <strong>removed from these playlists</strong> and all connected trains will be notified to resync.
+                  </p>
+                </div>
+              )}
+              <p className="text-xs text-slate-400">This action cannot be undone.</p>
+            </div>
+            <div className="flex justify-end gap-3 border-t border-slate-100 px-6 py-4">
+              <button
+                type="button"
+                disabled={deleteBusy}
+                onClick={() => setDeleteTarget(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteBusy}
+                onClick={confirmDelete}
+                className={cn(
+                  "rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors",
+                  deleteBusy ? "cursor-not-allowed bg-red-300" : "bg-red-600 hover:bg-red-700",
+                )}
+              >
+                {deleteBusy ? "Deleting…" : deleteTarget.playlists.length > 0 ? "Delete & remove from playlists" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Preview modal */}
       {preview && (

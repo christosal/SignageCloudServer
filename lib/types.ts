@@ -56,7 +56,7 @@ export interface TrainDoc {
   connectedTvs: ConnectedTv[];
   createdAt: Timestamp;
   /** Set by cloud admin; Pi watches and executes then clears */
-  pendingCommand?: "WAITING_SCREEN" | null;
+  pendingCommand?: "WAITING_SCREEN" | "SYNC_PLAYLIST" | "SYNC_ANNOUNCEMENTS" | null;
   /** Written by Pi: what is currently shown on the TVs */
   currentState?: TrainCurrentState | null;
 }
