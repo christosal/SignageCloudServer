@@ -2,7 +2,6 @@
 
 import {
   assignPlaylistToTrain,
-  createTrain,
   deleteTrain,
   formatHeartbeat,
   isTrainOnline,
@@ -18,8 +17,6 @@ export default function TrainsPage() {
   const { trains, loading, error: liveError } = useTrains();
   const [playlists, setPlaylists] = useState<PlaylistDoc[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [newName, setNewName] = useState("");
-  const [busy, setBusy] = useState(false);
   // rename state: trainId → draft name
   const [renaming, setRenaming] = useState<Record<string, string>>({});
 
@@ -28,20 +25,6 @@ export default function TrainsPage() {
   }, []);
 
   const displayError = liveError ?? err;
-
-  async function onCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      await createTrain(newName.trim() || "New train");
-      setNewName("");
-    } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Create failed");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function onAssign(trainId: string, playlistId: string) {
     setErr(null);
@@ -80,7 +63,9 @@ export default function TrainsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Trains</h1>
-          <p className="mt-1 text-slate-500">Assign playlists and monitor connectivity in real-time</p>
+          <p className="mt-1 text-slate-500">
+            Trains register automatically when the local server starts. Assign playlists here.
+          </p>
         </div>
         <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
@@ -93,31 +78,6 @@ export default function TrainsPage() {
           {displayError}
         </p>
       ) : null}
-
-      {/* Add train */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">Add train</h2>
-        <form onSubmit={onCreate} className="mt-4 flex flex-wrap items-end gap-3">
-          <div className="min-w-[200px] flex-1">
-            <label className="block text-sm font-medium text-slate-700">Name</label>
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="e.g. Train 1 Lesvos"
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-900 disabled:bg-slate-400"
-          >
-            {busy ? "Adding…" : "Add train"}
-          </button>
-        </form>
-      </div>
-
-      {/* Train list */}
       <div className="space-y-4">
         {loading ? (
           <p className="text-sm text-slate-500">Connecting…</p>

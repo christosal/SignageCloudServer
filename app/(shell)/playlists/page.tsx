@@ -21,18 +21,10 @@ export default function PlaylistsPage() {
 
   useEffect(() => {
     let c = false;
-    (async () => {
-      try {
-        await refresh();
-      } catch (e: unknown) {
-        if (!c) setErr(e instanceof Error ? e.message : "Failed");
-      } finally {
-        if (!c) setLoading(false);
-      }
-    })();
-    return () => {
-      c = true;
-    };
+    refresh()
+      .catch((e: unknown) => { if (!c) setErr(e instanceof Error ? e.message : "Failed"); })
+      .finally(() => { if (!c) setLoading(false); });
+    return () => { c = true; };
   }, []);
 
   async function onCreate(e: React.FormEvent) {
@@ -40,9 +32,8 @@ export default function PlaylistsPage() {
     setBusy(true);
     setErr(null);
     try {
-      const id = await createPlaylist(title || "New playlist", true);
+      const id = await createPlaylist(title.trim() || "New playlist", true);
       setTitle("");
-      await refresh();
       router.push(`/playlists/${id}`);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Create failed");
@@ -52,39 +43,36 @@ export default function PlaylistsPage() {
   }
 
   async function onDelete(id: string, label: string) {
-    if (!confirm(`Delete playlist “${label}”?`)) return;
+    if (!confirm(`Delete playlist "${label}"?`)) return;
     setErr(null);
-    try {
-      await deletePlaylist(id);
-      await refresh();
-    } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Delete failed");
-    }
+    try { await deletePlaylist(id); await refresh(); }
+    catch (e: unknown) { setErr(e instanceof Error ? e.message : "Delete failed"); }
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900">Playlists</h1>
-        <p className="mt-1 text-slate-600">Build loops for your trains</p>
+    <div className="mx-auto max-w-4xl space-y-8">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">Playlists</h1>
+          <p className="mt-1 text-slate-500">Build media loops for your trains</p>
+        </div>
       </div>
 
-      {err ? (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {err}
-        </p>
-      ) : null}
+      {err && (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{err}</p>
+      )}
 
+      {/* Create */}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">New playlist</h2>
-        <form onSubmit={onCreate} className="mt-4 flex flex-wrap items-end gap-4">
+        <h2 className="text-base font-semibold text-slate-900">New playlist</h2>
+        <form onSubmit={onCreate} className="mt-4 flex flex-wrap items-end gap-3">
           <div className="min-w-[200px] flex-1">
             <label className="block text-sm font-medium text-slate-700">Title</label>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Main loop"
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="e.g. Main loop summer"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           </div>
           <button
@@ -97,55 +85,54 @@ export default function PlaylistsPage() {
         </form>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-6 py-4">
-          <h2 className="text-lg font-semibold text-slate-900">All playlists</h2>
+      {/* List */}
+      {loading ? (
+        <p className="text-sm text-slate-500">Loading…</p>
+      ) : items.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500">
+          No playlists yet. Create one above.
         </div>
-        {loading ? (
-          <p className="p-6 text-slate-500">Loading…</p>
-        ) : (
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-slate-50 text-slate-600">
-              <tr>
-                <th className="px-4 py-3 font-medium">Title</th>
-                <th className="px-4 py-3 font-medium">Items</th>
-                <th className="px-4 py-3 font-medium">Loop</th>
-                <th className="px-4 py-3 font-medium">Updated</th>
-                <th className="px-4 py-3 font-medium" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {items.map((p) => (
-                <tr key={p.id} className="bg-white">
-                  <td className="px-4 py-2">
-                    <Link
-                      href={`/playlists/${p.id}`}
-                      className="font-medium text-brand-700 hover:underline"
-                    >
-                      {p.title}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2 text-slate-600">{p.items?.length ?? 0}</td>
-                  <td className="px-4 py-2 text-slate-600">{p.loop ? "Yes" : "No"}</td>
-                  <td className="px-4 py-2 text-slate-500">{formatUpdatedAt(p.updatedAt)}</td>
-                  <td className="px-4 py-2">
-                    <button
-                      type="button"
-                      onClick={() => onDelete(p.id, p.title)}
-                      className="text-sm font-medium text-red-600 hover:text-red-800"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        {!loading && items.length === 0 ? (
-          <p className="p-6 text-slate-500">No playlists yet.</p>
-        ) : null}
-      </div>
+      ) : (
+        <div className="space-y-3">
+          {items.map((p) => (
+            <div
+              key={p.id}
+              className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm"
+            >
+              <div className="min-w-0">
+                <Link
+                  href={`/playlists/${p.id}`}
+                  className="text-sm font-semibold text-slate-900 hover:text-brand-700"
+                >
+                  {p.title}
+                </Link>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {p.items?.length ?? 0} item{(p.items?.length ?? 0) !== 1 ? "s" : ""}
+                  {" · "}
+                  {p.loop ? "Loops" : "No loop"}
+                  {" · "}
+                  Updated {formatUpdatedAt(p.updatedAt)}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <Link
+                  href={`/playlists/${p.id}`}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Edit
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => void onDelete(p.id, p.title)}
+                  className="text-xs font-medium text-slate-400 hover:text-red-600"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
