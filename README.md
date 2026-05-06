@@ -80,9 +80,9 @@ If the console prompts for a composite index when ordering **playlists** by `upd
 ## Test the app
 
 1. **Media**: upload a video or image; set category; for images set duration (default 6s). Open the preview thumbnail.
-2. **Playlists**: create a playlist, open it, add media from the library, reorder with ↑/↓, **Save playlist**.
+2. **Playlists**: create a playlist, open it, add media from the library, reorder with up/down arrows, **Save playlist**.
 3. **Trains**: add a train; assign an **active playlist** from the dropdown.
-4. **Monitoring**: see all trains; **Online** means `lastHeartbeat` is within the last **2 minutes** (see `lib/constants.ts`). Until field devices write heartbeats to Firestore, trains will show **Offline** — you can test by temporarily editing a train document in Firestore and setting `lastHeartbeat` to a recent timestamp.
+4. **Monitoring**: see all trains; **Online** means `lastHeartbeat` is within the last **2 minutes** (see `lib/constants.ts`). Until field devices write heartbeats to Firestore, trains will show **Offline**.
 
 ## Data model (collections)
 
@@ -94,21 +94,54 @@ If the console prompts for a composite index when ordering **playlists** by `upd
 
 ## Project layout
 
-- `app/login` — email/password sign-in  
-- `app/(shell)/*` — sidebar layout + protected pages (`dashboard`, `media`, `playlists`, `trains`, `monitoring`)  
-- `lib/firebase/client.ts` — Firebase init from env  
-- `lib/services/*` — Firestore + Storage helpers (client-side only; no API routes in this MVP)
+- `app/login` — email/password sign-in
+- `app/(shell)/*` — sidebar layout + protected pages (`dashboard`, `media`, `playlists`, `trains`, `monitoring`)
+- `lib/firebase/client.ts` — Firebase init from env
+- `lib/services/*` — Firestore + Storage helpers (client-side only; no API routes needed)
 
 ## Secrets
 
 Do **not** commit real API keys. If keys were ever exposed in git or chat, rotate them in the Google Cloud / Firebase console.
 
-## Roadmap (out of scope for this MVP)
+## Train to Pi sync (real-time)
 
-- Raspberry / local server sync  
-- HTTP API routes  
-- Versioning and audit logs  
+Each Pi connects **directly to Firestore** via `firebase-admin` and watches its own train document in real-time (`onSnapshot`). No polling, no custom API on this server — the admin sets a playlist on a train, and the right Pi picks it up instantly.
+
+### Setup per Pi (SignageLocalServer)
+
+1. **Firebase Console → Project settings → Service accounts → Generate new private key** — download JSON.
+2. Set in the Pi's environment:
+
+   ```
+   FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}   # full JSON as one line
+   ```
+
+3. The Pi identifies itself via `trainId` in **`data/config.json`** — this must equal the Firestore document id in the **`trains`** collection (visible in Firebase Console or the Trains page).
+   Override without editing the file: `CLOUD_TRAIN_DOC_ID=<firestoreDocId>`.
+
+### Two trains, two Pis
+
+Each Pi points to a **different** Firestore train document. They are fully independent.
+
+### Manual re-sync (from the Pi)
+
+```bash
+curl -X POST http://localhost:3000/api/sync-cloud
+```
+
+### What happens on sync
+
+1. Pi reads `trains/{trainId}.activePlaylistId`.
+2. Fetches `playlists/{id}` and each `media/{id}` document.
+3. Downloads missing files from Firebase Storage `downloadUrl` into local `/media/...`.
+4. Writes `data/media.json`, `data/playlists.json`, `data/activePlaylist.json`.
+5. Broadcasts `PLAY_PLAYLIST` to connected TVs via WebSocket.
+
+## Roadmap
+
+- Heartbeat write-back from Pi to Firestore (for the monitoring page)
+- Versioning and audit logs
 
 ---
 
-**VillageTrain** — signage admin scaffold for `localhost:3000` and future deploy at `https://signage.villagetrain.gr`.
+**VillageTrain** — signage admin for `localhost:3000` and production at `https://signage.villagetrain.gr`.
