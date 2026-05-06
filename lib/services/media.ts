@@ -40,9 +40,10 @@ export async function uploadMedia(params: {
   file: File;
   title: string;
   category: MediaCategory;
+  subcategory?: string;
   durationSeconds: number | null;
 }): Promise<string> {
-  const { file, title, category, durationSeconds } = params;
+  const { file, title, category, subcategory, durationSeconds } = params;
   const mediaType = detectMediaType(file);
   if (!mediaType) {
     throw new Error("File must be a video or image");
@@ -51,7 +52,8 @@ export async function uploadMedia(params: {
   const db = getDb();
   const storage = getFirebaseStorage();
   const safeName = sanitizeFilename(file.name);
-  const storagePath = `media/${category}/${Date.now()}_${safeName}`;
+  const subPath = subcategory ? `${category}/${subcategory.trim()}` : category;
+  const storagePath = `media/${subPath}/${Date.now()}_${safeName}`;
   const storageRef = ref(storage, storagePath);
   await uploadBytes(storageRef, file, { contentType: file.type || undefined });
   const downloadUrl = await getDownloadURL(storageRef);
@@ -59,7 +61,7 @@ export async function uploadMedia(params: {
   const duration =
     mediaType === "image" ? durationSeconds ?? 6 : null;
 
-  const refDoc = await addDoc(collection(db, COL), {
+  const docData: Record<string, unknown> = {
     title: title.trim() || safeName,
     mediaType,
     category,
@@ -68,8 +70,10 @@ export async function uploadMedia(params: {
     filename: file.name,
     duration,
     createdAt: serverTimestamp(),
-  });
+  };
+  if (subcategory) docData['subcategory'] = subcategory.trim();
 
+  const refDoc = await addDoc(collection(db, COL), docData);
   return refDoc.id;
 }
 

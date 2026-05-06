@@ -6,6 +6,7 @@ import {
   formatHeartbeat,
   isTrainOnline,
   renameTrain,
+  sendWaitingScreen,
 } from "@/lib/services/trains";
 import { listPlaylists } from "@/lib/services/playlists";
 import { useTrains } from "@/lib/hooks/useTrains";
@@ -17,8 +18,8 @@ export default function TrainsPage() {
   const { trains, loading, error: liveError } = useTrains();
   const [playlists, setPlaylists] = useState<PlaylistDoc[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  // rename state: trainId → draft name
   const [renaming, setRenaming] = useState<Record<string, string>>({});
+  const [waitingBusy, setWaitingBusy] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     listPlaylists().then(setPlaylists).catch(() => null);
@@ -45,6 +46,18 @@ export default function TrainsPage() {
       setRenaming((r) => { const n = { ...r }; delete n[trainId]; return n; });
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Rename failed");
+    }
+  }
+
+  async function onWaitingScreen(trainId: string) {
+    setWaitingBusy((b) => ({ ...b, [trainId]: true }));
+    setErr(null);
+    try {
+      await sendWaitingScreen(trainId);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Command failed");
+    } finally {
+      setWaitingBusy((b) => ({ ...b, [trainId]: false }));
     }
   }
 
@@ -88,6 +101,7 @@ export default function TrainsPage() {
             const online = isTrainOnline(t.lastHeartbeat);
             const tvCount = t.connectedTvs?.length ?? 0;
             const isRenaming = renaming[t.id] !== undefined;
+            const state = t.currentState ?? null;
 
             return (
               <div
@@ -160,15 +174,47 @@ export default function TrainsPage() {
                         📺 {tvCount} TV{tvCount > 1 ? "s" : ""}
                       </span>
                     )}
+
+                    {state && (
+                      <span className={cn(
+                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                        state.type === "waiting"
+                          ? "bg-sky-100 text-sky-700"
+                          : state.type === "announcement"
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-violet-100 text-violet-700",
+                      )}>
+                        {state.type === "waiting" ? "⏳ Waiting Screen"
+                          : state.type === "announcement" ? `📢 ${state.title ?? "Announcement"}`
+                          : `▶ ${state.title ?? state.playlistTitle ?? "Playlist"}`}
+                      </span>
+                    )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => void onDelete(t.id, t.name)}
-                    className="text-xs font-medium text-slate-400 hover:text-red-600"
-                  >
-                    Delete
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {online && (
+                      <button
+                        type="button"
+                        disabled={waitingBusy[t.id]}
+                        onClick={() => void onWaitingScreen(t.id)}
+                        className={cn(
+                          "rounded-lg border px-3 py-1 text-xs font-semibold transition-colors",
+                          waitingBusy[t.id]
+                            ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                            : "border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100",
+                        )}
+                      >
+                        {waitingBusy[t.id] ? "Sending…" : "⏳ Waiting Screen"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void onDelete(t.id, t.name)}
+                      className="text-xs font-medium text-slate-400 hover:text-red-600"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center gap-6 text-sm text-slate-600">

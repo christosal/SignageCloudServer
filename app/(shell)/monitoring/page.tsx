@@ -87,6 +87,20 @@ export default function MonitoringPage() {
                         📺 {tvs.length} TV{tvs.length > 1 ? "s" : ""}
                       </span>
                     )}
+                    {t.currentState && (
+                      <span className={cn(
+                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                        t.currentState.type === "waiting"
+                          ? "bg-sky-100 text-sky-700"
+                          : t.currentState.type === "announcement"
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-violet-100 text-violet-700",
+                      )}>
+                        {t.currentState.type === "waiting" ? "⏳ Waiting Screen"
+                          : t.currentState.type === "announcement" ? `📢 ${t.currentState.title ?? "Announcement"}`
+                          : `▶ ${t.currentState.title ?? t.currentState.playlistTitle ?? "Playlist"}`}
+                      </span>
+                    )}
                   </div>
                   <span className="text-xs text-slate-400">
                     {formatHeartbeat(t.lastHeartbeat)}

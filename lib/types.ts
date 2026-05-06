@@ -7,6 +7,8 @@ export interface MediaDoc {
   title: string;
   mediaType: MediaType;
   category: string;
+  /** For announcements: subfolder grouping, e.g. "castle", "stops" */
+  subcategory?: string;
   storagePath: string;
   downloadUrl: string;
   filename: string;
@@ -37,6 +39,12 @@ export interface ConnectedTv {
   lastSeen?: Timestamp;
 }
 
+export interface TrainCurrentState {
+  type: "playlist" | "announcement" | "waiting";
+  title: string | null;
+  playlistTitle?: string | null;
+}
+
 export interface TrainDoc {
   id: string;
   name: string;
@@ -47,4 +55,8 @@ export interface TrainDoc {
   lastHeartbeat: Timestamp | null;
   connectedTvs: ConnectedTv[];
   createdAt: Timestamp;
+  /** Set by cloud admin; Pi watches and executes then clears */
+  pendingCommand?: "WAITING_SCREEN" | null;
+  /** Written by Pi: what is currently shown on the TVs */
+  currentState?: TrainCurrentState | null;
 }

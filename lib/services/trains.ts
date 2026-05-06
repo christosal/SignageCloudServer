@@ -72,6 +72,12 @@ export async function deleteTrain(id: string): Promise<void> {
   await deleteDoc(doc(db, COL, id));
 }
 
+/** Set pendingCommand = "WAITING_SCREEN" — the Pi picks this up via onSnapshot */
+export async function sendWaitingScreen(trainId: string): Promise<void> {
+  const db = getDb();
+  await updateDoc(doc(db, COL, trainId), { pendingCommand: "WAITING_SCREEN" });
+}
+
 export function formatHeartbeat(ts: Timestamp | null | undefined): string {
   if (!ts) return "Never";
   try {
