@@ -7,11 +7,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
-  { href: "/dashboard",  label: "Dashboard",  icon: "▦" },
-  { href: "/media",      label: "Media",       icon: "🎬" },
-  { href: "/playlists",  label: "Playlists",   icon: "≡" },
-  { href: "/trains",     label: "Trains",      icon: "🚂" },
-  { href: "/monitoring", label: "Monitoring",  icon: "📡" },
+  { href: "/dashboard", label: "Dashboard", icon: "▦" },
+  { href: "/media",     label: "Media",     icon: "🎬" },
+  { href: "/playlists", label: "Playlists", icon: "≡" },
+  { href: "/trains",    label: "Trains",    icon: "🚂" },
 ] as const;
 
 export function Sidebar() {

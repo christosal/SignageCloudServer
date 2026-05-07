@@ -45,6 +45,18 @@ export interface TrainCurrentState {
   playlistTitle?: string | null;
 }
 
+/** Latest hardware snapshot from the Pi (heartbeat); optional fields when unavailable */
+export interface TrainPiMetrics {
+  cpuPercent: number | null;
+  cpuTempC: number | null;
+  ramUsedPercent: number | null;
+  storageFreeBytes: number | null;
+  storageTotalBytes: number | null;
+  networkIface: string | null;
+  netRxBytes: number | null;
+  netTxBytes: number | null;
+}
+
 export interface TrainDoc {
   id: string;
   name: string;
@@ -59,4 +71,6 @@ export interface TrainDoc {
   pendingCommand?: "WAITING_SCREEN" | "SYNC_PLAYLIST" | "SYNC_ANNOUNCEMENTS" | null;
   /** Written by Pi: what is currently shown on the TVs */
   currentState?: TrainCurrentState | null;
+  /** Written by Pi heartbeat: CPU, temp, RAM, disk, network */
+  piMetrics?: TrainPiMetrics | null;
 }
