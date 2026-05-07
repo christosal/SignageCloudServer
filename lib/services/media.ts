@@ -18,6 +18,12 @@ import type { MediaCategory } from "@/lib/constants";
 
 const COL = "media";
 
+/** Update the duration field of a media document. */
+export async function updateMediaDuration(id: string, durationSeconds: number): Promise<void> {
+  const db = getDb();
+  await updateDoc(doc(db, COL, id), { duration: durationSeconds });
+}
+
 function sanitizeFilename(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }

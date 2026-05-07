@@ -8,6 +8,7 @@ import {
   findPlaylistsContainingMedia,
   formatCreatedAt,
   listMedia,
+  updateMediaDuration,
   uploadMedia,
 } from "@/lib/services/media";
 import { sendSyncCommandToAllTrains } from "@/lib/services/trains";
@@ -19,6 +20,39 @@ const TYPE_BADGE: Record<string, string> = {
   video: "bg-violet-100 text-violet-700",
   image: "bg-amber-100 text-amber-700",
 };
+
+/** Read video duration (seconds, rounded) from a local File before upload. */
+function readVideoDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    const url = URL.createObjectURL(file);
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      const d = video.duration;
+      resolve(isFinite(d) && d > 0 ? Math.round(d) : null);
+    };
+    video.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    video.src = url;
+  });
+}
+
+/** Read video duration (seconds, rounded) from a remote URL (e.g. Firebase Storage). */
+function readRemoteVideoDuration(url: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.crossOrigin = "anonymous";
+    video.onloadedmetadata = () => {
+      const d = video.duration;
+      resolve(isFinite(d) && d > 0 ? Math.round(d) : null);
+    };
+    video.onerror = () => resolve(null);
+    video.src = url;
+    // Safety timeout — some URLs may never fire onloadedmetadata
+    setTimeout(() => resolve(null), 10_000);
+  });
+}
 
 export default function MediaPage() {
   const [items, setItems] = useState<MediaDoc[]>([]);
@@ -38,7 +72,46 @@ export default function MediaPage() {
     playlists: PlaylistDoc[];
   } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanStatus, setScanStatus] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  async function scanDurations() {
+    const targets = items.filter((m) => m.mediaType === "video" && (m.duration == null || m.duration === 0));
+    if (targets.length === 0) return;
+    setScanBusy(true);
+    setScanStatus(`0 / ${targets.length}`);
+    let done = 0;
+    for (const m of targets) {
+      try {
+        const dur = await readRemoteVideoDuration(m.downloadUrl);
+        if (dur) {
+          await updateMediaDuration(m.id, dur);
+          done++;
+          setScanStatus(`${done} / ${targets.length} — "${m.title}" → ${dur}s`);
+        } else {
+          done++;
+          setScanStatus(`${done} / ${targets.length} — "${m.title}" παρελείφθη (άγνωστη διάρκεια)`);
+        }
+      } catch {
+        done++;
+        setScanStatus(`${done} / ${targets.length} — "${m.title}" σφάλμα`);
+      }
+    }
+    if (done > 0) {
+      setScanStatus(`✓ ${done} videos ενημερώθηκαν — στέλνω SYNC σε όλα τα Pis…`);
+      try {
+        await sendSyncCommandToAllTrains("SYNC_PLAYLIST");
+        setScanStatus(`✓ ${done} videos ενημερώθηκαν — τα Pis θα ξαναφορτώσουν το playlist`);
+      } catch {
+        setScanStatus(`✓ ${done} videos ενημερώθηκαν (αποτυχία αποστολής sync)`);
+      }
+    } else {
+      setScanStatus("Δεν βρέθηκαν διάρκειες για κανένα video.");
+    }
+    setScanBusy(false);
+    await refresh();
+  }
 
   async function refresh() {
     setErr(null);
@@ -67,9 +140,16 @@ export default function MediaPage() {
     setUploadProgress(0);
     setErr(null);
     try {
+      // For video files, read the actual duration from the browser before uploading.
+      // This is used server-side for playlist sync timing.
+      let durationSeconds: number | null = detected === "image" ? imageDuration : null;
+      if (detected === "video") {
+        durationSeconds = await readVideoDuration(file);
+      }
+
       // Simulate progress since firebase uploadBytes doesn't expose it easily
       const ticker = setInterval(() => setUploadProgress((p) => Math.min((p ?? 0) + 10, 90)), 200);
-      await uploadMedia({ file, title: title || file.name, category, subcategory: category === "announcements" ? subcategory.trim() || undefined : undefined, durationSeconds: detected === "image" ? imageDuration : null });
+      await uploadMedia({ file, title: title || file.name, category, subcategory: category === "announcements" ? subcategory.trim() || undefined : undefined, durationSeconds });
       clearInterval(ticker);
       setUploadProgress(100);
       setTimeout(() => setUploadProgress(null), 600);
@@ -230,6 +310,28 @@ export default function MediaPage() {
           </div>
         </form>
       </div>
+
+      {/* ── Scan missing durations ── */}
+      {items.some((m) => m.mediaType === "video" && (m.duration == null || m.duration === 0)) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 flex items-center gap-4">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-amber-800">
+              {items.filter((m) => m.mediaType === "video" && (m.duration == null || m.duration === 0)).length} video{items.filter((m) => m.mediaType === "video" && (m.duration == null || m.duration === 0)).length !== 1 ? "s" : ""} χωρίς διάρκεια
+            </p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Χωρίς διάρκεια το σύστημα sync δεν μπορεί να συγχρονίσει τα TVs. Κάντε κλικ για αυτόματη ανίχνευση.
+            </p>
+            {scanStatus && <p className="text-xs text-amber-900 mt-1 font-mono">{scanStatus}</p>}
+          </div>
+          <button
+            onClick={scanDurations}
+            disabled={scanBusy}
+            className="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            {scanBusy ? "Σκανάρισμα…" : "🔍 Scan διάρκειες"}
+          </button>
+        </div>
+      )}
 
       {/* ── Announcements (grouped by folder) ── */}
       {!loading && announcements.length > 0 && (
