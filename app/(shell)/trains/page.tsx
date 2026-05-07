@@ -20,6 +20,7 @@ export default function TrainsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<Record<string, string>>({});
   const [waitingBusy, setWaitingBusy] = useState<Record<string, boolean>>({});
+  const [confirmClear, setConfirmClear] = useState<{ trainId: string; trainName: string } | null>(null);
 
   const onlineCount = trains.filter((t) => isTrainOnline(t.lastHeartbeat)).length;
   const totalTvs = trains.reduce((s, t) => s + (t.connectedTvs?.length ?? 0), 0);
@@ -32,11 +33,32 @@ export default function TrainsPage() {
 
   async function onAssign(trainId: string, playlistId: string) {
     setErr(null);
+    // Picking "None" clears the active playlist and switches the train to the
+    // waiting screen — confirm first because it visibly stops playback on every TV.
+    if (playlistId === "") {
+      const train = trains.find((t) => t.id === trainId);
+      if (train?.activePlaylistId) {
+        setConfirmClear({ trainId, trainName: train.name });
+        return;
+      }
+    }
     const pl = playlistId === "" ? null : playlists.find((p) => p.id === playlistId) ?? null;
     try {
       await assignPlaylistToTrain(trainId, pl?.id ?? null, pl?.title ?? null);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Assign failed");
+    }
+  }
+
+  async function confirmClearActive() {
+    if (!confirmClear) return;
+    const { trainId } = confirmClear;
+    setConfirmClear(null);
+    setErr(null);
+    try {
+      await assignPlaylistToTrain(trainId, null, null);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Clear failed");
     }
   }
 
@@ -276,6 +298,39 @@ export default function TrainsPage() {
           })
         )}
       </div>
+
+      {/* Confirmation modal: clearing active playlist */}
+      {confirmClear && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => setConfirmClear(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-slate-900">Σταμάτημα playlist;</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Όλα τα TVs του τραίνου <span className="font-semibold">{confirmClear.trainName}</span>{" "}
+              θα μεταβούν στο Waiting Screen και η αναπαραγωγή θα σταματήσει.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmClear(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Ακύρωση
+              </button>
+              <button
+                onClick={confirmClearActive}
+                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+              >
+                Ναι, σταμάτα
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

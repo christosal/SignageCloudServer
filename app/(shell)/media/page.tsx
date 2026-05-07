@@ -21,37 +21,71 @@ const TYPE_BADGE: Record<string, string> = {
   image: "bg-amber-100 text-amber-700",
 };
 
-/** Read video duration (seconds, rounded) from a local File before upload. */
-function readVideoDuration(file: File): Promise<number | null> {
+/**
+ * Read video duration (seconds, rounded) from a URL or local File.
+ *
+ * Some encodings (notably WebM and fragmented MP4) report `Infinity` for
+ * `video.duration` until the browser is forced to seek. We handle that by
+ * seeking to a huge value and reading the corrected duration on `timeupdate`.
+ *
+ * For Firebase Storage URLs we do NOT set `crossOrigin`, since their auth
+ * token is in the query string — setting it triggers a CORS preflight that
+ * Firebase Storage does not answer.
+ */
+function readVideoDurationFromSource(source: string | File): Promise<number | null> {
   return new Promise((resolve) => {
     const video = document.createElement("video");
     video.preload = "metadata";
-    const url = URL.createObjectURL(file);
-    video.onloadedmetadata = () => {
-      URL.revokeObjectURL(url);
-      const d = video.duration;
-      resolve(isFinite(d) && d > 0 ? Math.round(d) : null);
+    video.muted = true;
+    video.playsInline = true;
+
+    let settled = false;
+    const objectUrl = source instanceof File ? URL.createObjectURL(source) : null;
+    const cleanup = () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      video.removeAttribute("src");
+      video.load();
     };
-    video.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
-    video.src = url;
+    const finish = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    video.addEventListener("loadedmetadata", () => {
+      if (isFinite(video.duration) && video.duration > 0) {
+        finish(Math.round(video.duration));
+      } else {
+        // Force the browser to compute the real duration by seeking past the end.
+        try { video.currentTime = 1e10; } catch { /* ignore */ }
+      }
+    });
+
+    video.addEventListener("durationchange", () => {
+      if (isFinite(video.duration) && video.duration > 0) {
+        finish(Math.round(video.duration));
+      }
+    });
+
+    video.addEventListener("error", () => finish(null));
+
+    // Safety timeout — bail out if metadata never loads
+    const timeout = setTimeout(() => finish(null), 20_000);
+    void timeout;
+
+    video.src = objectUrl ?? (source as string);
   });
 }
 
-/** Read video duration (seconds, rounded) from a remote URL (e.g. Firebase Storage). */
+/** Local File → duration (used at upload time). */
+function readVideoDuration(file: File): Promise<number | null> {
+  return readVideoDurationFromSource(file);
+}
+
+/** Remote URL → duration (used by the "Scan durations" rescue tool). */
 function readRemoteVideoDuration(url: string): Promise<number | null> {
-  return new Promise((resolve) => {
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    video.crossOrigin = "anonymous";
-    video.onloadedmetadata = () => {
-      const d = video.duration;
-      resolve(isFinite(d) && d > 0 ? Math.round(d) : null);
-    };
-    video.onerror = () => resolve(null);
-    video.src = url;
-    // Safety timeout — some URLs may never fire onloadedmetadata
-    setTimeout(() => resolve(null), 10_000);
-  });
+  return readVideoDurationFromSource(url);
 }
 
 export default function MediaPage() {
@@ -80,34 +114,37 @@ export default function MediaPage() {
     const targets = items.filter((m) => m.mediaType === "video" && (m.duration == null || m.duration === 0));
     if (targets.length === 0) return;
     setScanBusy(true);
-    setScanStatus(`0 / ${targets.length}`);
-    let done = 0;
+    setScanStatus(`0 / ${targets.length} — διαβάζω metadata…`);
+    let updated = 0;
+    let skipped = 0;
     for (const m of targets) {
       try {
         const dur = await readRemoteVideoDuration(m.downloadUrl);
         if (dur) {
           await updateMediaDuration(m.id, dur);
-          done++;
-          setScanStatus(`${done} / ${targets.length} — "${m.title}" → ${dur}s`);
+          updated++;
+          setScanStatus(`${updated + skipped} / ${targets.length} — "${m.title}" → ${dur}s ✓`);
+          // Update local state so banner hides immediately
+          setItems((prev) => prev.map((it) => it.id === m.id ? { ...it, duration: dur } : it));
         } else {
-          done++;
-          setScanStatus(`${done} / ${targets.length} — "${m.title}" παρελείφθη (άγνωστη διάρκεια)`);
+          skipped++;
+          setScanStatus(`${updated + skipped} / ${targets.length} — "${m.title}" δεν βρέθηκε διάρκεια`);
         }
       } catch {
-        done++;
-        setScanStatus(`${done} / ${targets.length} — "${m.title}" σφάλμα`);
+        skipped++;
+        setScanStatus(`${updated + skipped} / ${targets.length} — "${m.title}" σφάλμα`);
       }
     }
-    if (done > 0) {
-      setScanStatus(`✓ ${done} videos ενημερώθηκαν — στέλνω SYNC σε όλα τα Pis…`);
+    if (updated > 0) {
+      setScanStatus(`✓ ${updated} videos ενημερώθηκαν${skipped > 0 ? `, ${skipped} παρελείφθησαν` : ""} — στέλνω SYNC στα Pis…`);
       try {
         await sendSyncCommandToAllTrains("SYNC_PLAYLIST");
-        setScanStatus(`✓ ${done} videos ενημερώθηκαν — τα Pis θα ξαναφορτώσουν το playlist`);
+        setScanStatus(`✓ ${updated} videos ενημερώθηκαν — τα Pis ξαναφορτώνουν το playlist`);
       } catch {
-        setScanStatus(`✓ ${done} videos ενημερώθηκαν (αποτυχία αποστολής sync)`);
+        setScanStatus(`✓ ${updated} videos ενημερώθηκαν (αποτυχία αποστολής sync)`);
       }
     } else {
-      setScanStatus("Δεν βρέθηκαν διάρκειες για κανένα video.");
+      setScanStatus(`⚠️ Δεν διαβάστηκε καμία διάρκεια. Βεβαιωθείτε ότι τα αρχεία είναι προσβάσιμα.`);
     }
     setScanBusy(false);
     await refresh();
