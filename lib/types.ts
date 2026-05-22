@@ -2,6 +2,29 @@ import type { Timestamp } from "firebase/firestore";
 
 export type MediaType = "video" | "image";
 
+// ── Guide Script ──────────────────────────────────────────────────────────────
+
+export interface ScriptLine {
+  id: string;
+  /** Start time in seconds (inclusive). */
+  start: number;
+  /** End time in seconds (exclusive). */
+  end: number;
+  text: string;
+  order: number;
+}
+
+export interface ScriptDoc {
+  id: string;
+  mediaId: string;
+  title: string;
+  language: string;
+  mode: "line";
+  lines: ScriptLine[];
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export interface MediaDoc {
   id: string;
   title: string;

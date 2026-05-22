@@ -14,6 +14,7 @@ import {
 import { sendSyncCommandToAllTrains } from "@/lib/services/trains";
 import type { MediaDoc, PlaylistDoc } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 const TYPE_BADGE: Record<string, string> = {
@@ -539,9 +540,20 @@ function MediaCard({ m, onPreview, onDelete }: { m: MediaDoc; onPreview: (m: Med
           <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-semibold", TYPE_BADGE[m.mediaType] ?? "bg-slate-100 text-slate-600")}>
             {m.mediaType}
           </span>
-          <button type="button" onClick={() => onDelete(m)} className="text-[10px] font-medium text-slate-400 hover:text-red-600">
-            Delete
-          </button>
+          <div className="flex items-center gap-2">
+            {m.mediaType === "video" && (
+              <Link
+                href={`/media/${m.id}`}
+                className="text-[10px] font-medium text-blue-500 hover:text-blue-700"
+                title="Edit guide script"
+              >
+                Script
+              </Link>
+            )}
+            <button type="button" onClick={() => onDelete(m)} className="text-[10px] font-medium text-slate-400 hover:text-red-600">
+              Delete
+            </button>
+          </div>
         </div>
         <p className="text-[10px] text-slate-400">{formatCreatedAt(m.createdAt)}</p>
       </div>
