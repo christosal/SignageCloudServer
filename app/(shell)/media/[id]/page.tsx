@@ -2,7 +2,7 @@
 
 import { doc, getDoc } from "firebase/firestore";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { getDb } from "@/lib/firebase/client";
 import { getScriptByMediaId, saveScript } from "@/lib/services/scripts";
 import type { MediaDoc, ScriptLine } from "@/lib/types";
@@ -86,8 +86,8 @@ function KaraokeDisplay({ lines, currentTime, visibleUpcoming = 3 }: KaraokeDisp
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function MediaDetailPage({ params }: { params: { id: string } }) {
-  const mediaId = params.id;
+export default function MediaDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id: mediaId } = use(params);
 
   // Media
   const [media, setMedia] = useState<MediaDoc | null>(null);
