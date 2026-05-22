@@ -33,7 +33,7 @@ interface KaraokeDisplayProps {
   visibleUpcoming?: number;
 }
 
-export function KaraokeDisplay({ lines, currentTime, visibleUpcoming = 3 }: KaraokeDisplayProps) {
+function KaraokeDisplay({ lines, currentTime, visibleUpcoming = 3 }: KaraokeDisplayProps) {
   const sorted = [...lines].sort((a, b) => a.start - b.start);
   const activeIdx = sorted.findIndex((l) => l.start <= currentTime && currentTime < l.end);
   const prevLine = activeIdx > 0 ? sorted[activeIdx - 1] ?? null : null;
