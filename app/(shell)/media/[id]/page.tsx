@@ -2,7 +2,7 @@
 
 import { doc, getDoc } from "firebase/firestore";
 import Link from "next/link";
-import { use, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDb } from "@/lib/firebase/client";
 import { getScriptByMediaId, saveScript } from "@/lib/services/scripts";
 import type { MediaDoc, ScriptLine } from "@/lib/types";
@@ -25,7 +25,25 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// ── KaraokePreview (reusable in both admin and tablet) ────────────────────────
+/** Split a long text block into segments by chosen mode. */
+function splitText(text: string, mode: "sentence" | "newline" | "paragraph"): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (mode === "newline") {
+    return trimmed.split(/\r?\n+/).map((s) => s.trim()).filter(Boolean);
+  }
+  if (mode === "paragraph") {
+    return trimmed.split(/\r?\n\s*\r?\n+/).map((s) => s.replace(/\s+/g, " ").trim()).filter(Boolean);
+  }
+  // Sentence: split on . ! ? ; followed by whitespace; also keep "..." together
+  return trimmed
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?;])\s+(?=[A-ZΑ-ΩΆΈΉΊΌΎΏ"“(\[])/u)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// ── KaraokeDisplay (admin preview) ────────────────────────────────────────────
 
 interface KaraokeDisplayProps {
   lines: ScriptLine[];
@@ -34,7 +52,7 @@ interface KaraokeDisplayProps {
 }
 
 function KaraokeDisplay({ lines, currentTime, visibleUpcoming = 3 }: KaraokeDisplayProps) {
-  const sorted = [...lines].sort((a, b) => a.start - b.start);
+  const sorted = useMemo(() => [...lines].sort((a, b) => a.start - b.start), [lines]);
   const activeIdx = sorted.findIndex((l) => l.start <= currentTime && currentTime < l.end);
   const prevLine = activeIdx > 0 ? sorted[activeIdx - 1] ?? null : null;
   const currLine = activeIdx >= 0 ? sorted[activeIdx] ?? null : null;
@@ -44,28 +62,27 @@ function KaraokeDisplay({ lines, currentTime, visibleUpcoming = 3 }: KaraokeDisp
       : sorted.filter((l) => l.start > currentTime).slice(0, visibleUpcoming);
   const nextLine = sorted.find((l) => l.start > currentTime) ?? null;
 
-  const showPrev = prevLine;
-  const showCurr = currLine;
-  const showUpcoming = currLine ? upcomingLines : nextLine ? [nextLine, ...upcomingLines.slice(0, visibleUpcoming - 1)] : [];
+  const showUpcoming = currLine
+    ? upcomingLines
+    : nextLine
+      ? [nextLine, ...upcomingLines.slice(0, visibleUpcoming - 1)]
+      : [];
   const atEnd = sorted.length > 0 && !prevLine && !currLine && !nextLine;
 
   return (
     <div className="rounded-2xl bg-slate-900 px-6 py-5 space-y-1.5 min-h-36">
-      {/* Previous */}
-      {showPrev && (
-        <p className="text-sm text-slate-500 leading-snug">{showPrev.text}</p>
+      {prevLine && (
+        <p className="text-sm text-slate-500 leading-snug">{prevLine.text}</p>
       )}
 
-      {/* Current */}
-      {showCurr ? (
-        <p className="text-2xl font-bold text-amber-400 leading-tight py-1">{showCurr.text}</p>
+      {currLine ? (
+        <p className="text-2xl font-bold text-amber-400 leading-tight py-1">{currLine.text}</p>
       ) : nextLine ? (
         <p className="text-slate-500 italic text-sm">Coming next…</p>
       ) : lines.length > 0 && !atEnd ? (
         <p className="text-slate-600 italic text-sm">—</p>
       ) : null}
 
-      {/* Upcoming */}
       {showUpcoming.map((l, i) => (
         <p
           key={l.id}
@@ -79,6 +96,181 @@ function KaraokeDisplay({ lines, currentTime, visibleUpcoming = 3 }: KaraokeDisp
       {atEnd && <p className="text-slate-500 italic text-sm">End of script</p>}
       {lines.length === 0 && (
         <p className="text-slate-600 italic text-sm">No lines yet — add lines above to see the preview.</p>
+      )}
+    </div>
+  );
+}
+
+// ── Paste pool — bulk-import segments ─────────────────────────────────────────
+
+interface PastePoolProps {
+  videoTime: number;
+  existingTexts: Set<string>;
+  defaultDurationSec: number;
+  onAddLine: (text: string, start: number, end: number) => void;
+  onBulkAdd: (segments: string[], startAt: number, perLineDuration: number) => void;
+}
+
+function PastePool({ videoTime, existingTexts, defaultDurationSec, onAddLine, onBulkAdd }: PastePoolProps) {
+  const [rawText, setRawText] = useState("");
+  const [splitMode, setSplitMode] = useState<"sentence" | "newline" | "paragraph">("sentence");
+  const [usedSegments, setUsedSegments] = useState<Set<string>>(new Set());
+
+  const segments = useMemo(() => splitText(rawText, splitMode), [rawText, splitMode]);
+  const visibleSegments = segments.filter((s) => !usedSegments.has(s));
+  const allUsed = segments.length > 0 && visibleSegments.length === 0;
+
+  function handleClickSegment(text: string) {
+    const start = round2(videoTime);
+    const end = round2(start + defaultDurationSec);
+    onAddLine(text, start, end);
+    setUsedSegments((prev) => new Set(prev).add(text));
+  }
+
+  function handleAddAll() {
+    if (visibleSegments.length === 0) return;
+    onBulkAdd(visibleSegments, round2(videoTime), defaultDurationSec);
+    setUsedSegments((prev) => {
+      const next = new Set(prev);
+      for (const s of visibleSegments) next.add(s);
+      return next;
+    });
+  }
+
+  function handleReset() {
+    setUsedSegments(new Set());
+  }
+
+  function handleClear() {
+    setRawText("");
+    setUsedSegments(new Set());
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <h3 className="text-sm font-bold text-slate-900">Paste full script</h3>
+        <span className="text-xs text-slate-500">
+          Paste once, then click a sentence at the video moment to add it as a line.
+        </span>
+      </div>
+
+      <textarea
+        rows={4}
+        value={rawText}
+        onChange={(e) => setRawText(e.target.value)}
+        placeholder="Paste your full guide script here. It will be split into clickable segments below."
+        className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+      />
+
+      {/* Controls */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-xs font-semibold text-slate-500">Split by</label>
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          {([
+            ["sentence", "Sentence"],
+            ["newline", "Line"],
+            ["paragraph", "Paragraph"],
+          ] as const).map(([val, label]) => (
+            <button
+              key={val}
+              type="button"
+              onClick={() => setSplitMode(val)}
+              className={cn(
+                "px-3 py-1.5 font-semibold transition-colors",
+                splitMode === val ? "bg-blue-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {segments.length > 0 && (
+          <>
+            <span className="text-xs text-slate-400">
+              {visibleSegments.length} of {segments.length} segments
+            </span>
+            <div className="ml-auto flex gap-2">
+              {usedSegments.size > 0 && (
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Reset used
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleClear}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Clear
+              </button>
+              {visibleSegments.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleAddAll}
+                  title={`Adds all ${visibleSegments.length} remaining segments as sequential lines starting at ${formatTime(videoTime)}`}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700"
+                >
+                  + Add all as sequential lines
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Segment chips */}
+      {segments.length > 0 && (
+        <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+          {segments.map((seg, i) => {
+            const isUsed = usedSegments.has(seg);
+            const isInLines = existingTexts.has(seg.trim());
+            return (
+              <button
+                key={`${i}-${seg.slice(0, 30)}`}
+                type="button"
+                disabled={isUsed}
+                onClick={() => handleClickSegment(seg)}
+                title={
+                  isUsed
+                    ? "Already added — click Reset used to add again"
+                    : `Add as line starting at ${formatTime(videoTime)}`
+                }
+                className={cn(
+                  "w-full text-left rounded-lg border px-3 py-2 text-sm transition-all flex items-start gap-2",
+                  isUsed
+                    ? "border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed line-through"
+                    : isInLines
+                      ? "border-amber-200 bg-amber-50 text-amber-900 hover:border-amber-400"
+                      : "border-slate-200 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50 cursor-pointer",
+                )}
+              >
+                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-500 mt-0.5">
+                  {i + 1}
+                </span>
+                <span className="flex-1 leading-snug">{seg}</span>
+                {!isUsed && (
+                  <span className="text-xs font-bold text-blue-500 flex-shrink-0">+ Add</span>
+                )}
+                {isInLines && !isUsed && (
+                  <span className="text-[10px] font-semibold text-amber-700 flex-shrink-0 mt-0.5">in script</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {rawText.trim() && segments.length === 0 && (
+        <p className="text-xs text-slate-400 italic">No segments detected — try a different split mode.</p>
+      )}
+
+      {allUsed && (
+        <p className="text-xs text-emerald-700 font-medium">✓ All segments added to script. Click &ldquo;Reset used&rdquo; to add again, or clear to paste new text.</p>
       )}
     </div>
   );
@@ -101,10 +293,12 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
   const [scriptId, setScriptId] = useState<string | null>(null);
   const [scriptTitle, setScriptTitle] = useState("");
   const [scriptLanguage, setScriptLanguage] = useState("en");
+  const [defaultDurationSec, setDefaultDurationSec] = useState(4);
 
   // Script lines
   const [lines, setLines] = useState<ScriptLine[]>([]);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
+  const [showPastePool, setShowPastePool] = useState(false);
 
   // Save state
   const [saving, setSaving] = useState(false);
@@ -112,11 +306,60 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
-  // Video player
-  const videoRef = useRef<HTMLVideoElement>(null);
+  // Video player state
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const [videoTime, setVideoTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoPlaying, setVideoPlaying] = useState(false);
+  const [videoErr, setVideoErr] = useState<string | null>(null);
+
+  // ── Callback ref: attach listeners whenever the <video> element mounts ────
+
+  const videoRef = useCallback((el: HTMLVideoElement | null) => {
+    setVideoEl(el);
+  }, []);
+
+  useEffect(() => {
+    const video = videoEl;
+    if (!video) return;
+
+    const onTime = () => setVideoTime(video.currentTime);
+    const onMeta = () => {
+      if (isFinite(video.duration) && video.duration > 0) {
+        setVideoDuration(video.duration);
+      }
+    };
+    const onPlay = () => setVideoPlaying(true);
+    const onPause = () => setVideoPlaying(false);
+    const onSeeked = () => setVideoTime(video.currentTime);
+    const onError = () => {
+      const err = video.error;
+      setVideoErr(err ? `Video error (${err.code}): ${err.message || "could not load"}` : "Video error");
+    };
+
+    video.addEventListener("timeupdate", onTime);
+    video.addEventListener("loadedmetadata", onMeta);
+    video.addEventListener("durationchange", onMeta);
+    video.addEventListener("play", onPlay);
+    video.addEventListener("pause", onPause);
+    video.addEventListener("seeked", onSeeked);
+    video.addEventListener("error", onError);
+
+    // Seed current state from element (covers tab-switch remount)
+    setVideoTime(video.currentTime);
+    if (isFinite(video.duration) && video.duration > 0) setVideoDuration(video.duration);
+    setVideoPlaying(!video.paused);
+
+    return () => {
+      video.removeEventListener("timeupdate", onTime);
+      video.removeEventListener("loadedmetadata", onMeta);
+      video.removeEventListener("durationchange", onMeta);
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onPause);
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onError);
+    };
+  }, [videoEl]);
 
   // ── Load media + existing script ─────────────────────────────────────────
 
@@ -150,51 +393,25 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
     })();
   }, [mediaId]);
 
-  // ── Video listeners ───────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    const onTime = () => setVideoTime(video.currentTime);
-    const onMeta = () => {
-      if (isFinite(video.duration)) setVideoDuration(video.duration);
-    };
-    const onPlay = () => setVideoPlaying(true);
-    const onPause = () => setVideoPlaying(false);
-
-    video.addEventListener("timeupdate", onTime);
-    video.addEventListener("loadedmetadata", onMeta);
-    video.addEventListener("durationchange", onMeta);
-    video.addEventListener("play", onPlay);
-    video.addEventListener("pause", onPause);
-    return () => {
-      video.removeEventListener("timeupdate", onTime);
-      video.removeEventListener("loadedmetadata", onMeta);
-      video.removeEventListener("durationchange", onMeta);
-      video.removeEventListener("play", onPlay);
-      video.removeEventListener("pause", onPause);
-    };
-  }, [media]);
-
   // ── Video controls ────────────────────────────────────────────────────────
 
   function togglePlay() {
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.paused) void v.play();
-    else v.pause();
+    if (!videoEl) return;
+    if (videoEl.paused) {
+      void videoEl.play().catch((e) => setVideoErr(String(e)));
+    } else {
+      videoEl.pause();
+    }
   }
 
   function seekBy(delta: number) {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = Math.max(0, Math.min(videoDuration || 0, v.currentTime + delta));
+    if (!videoEl) return;
+    videoEl.currentTime = Math.max(0, Math.min(videoDuration || videoEl.duration || 0, videoEl.currentTime + delta));
   }
 
   function seekTo(t: number) {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = Math.max(0, t);
+    if (!videoEl) return;
+    videoEl.currentTime = Math.max(0, t);
   }
 
   // ── Line operations ───────────────────────────────────────────────────────
@@ -204,12 +421,36 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
     const nl: ScriptLine = {
       id: newLineId(),
       start: t,
-      end: round2(t + 4),
+      end: round2(t + defaultDurationSec),
       text: "",
       order: lines.length,
     };
     setLines((prev) => [...prev, nl]);
     setSelectedLineId(nl.id);
+  }
+
+  function addLineFromPaste(text: string, start: number, end: number) {
+    const nl: ScriptLine = {
+      id: newLineId(),
+      start,
+      end,
+      text,
+      order: lines.length,
+    };
+    setLines((prev) => [...prev, nl].sort((a, b) => a.start - b.start).map((l, i) => ({ ...l, order: i })));
+  }
+
+  function bulkAddSequentialLines(segments: string[], startAt: number, perLineDuration: number) {
+    const newLines: ScriptLine[] = segments.map((text, i) => ({
+      id: newLineId(),
+      start: round2(startAt + i * perLineDuration),
+      end: round2(startAt + (i + 1) * perLineDuration),
+      text,
+      order: lines.length + i,
+    }));
+    setLines((prev) =>
+      [...prev, ...newLines].sort((a, b) => a.start - b.start).map((l, i) => ({ ...l, order: i })),
+    );
   }
 
   function updateLine(id: string, changes: Partial<ScriptLine>) {
@@ -242,10 +483,9 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   function playLine(line: ScriptLine) {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = line.start;
-    void v.play();
+    if (!videoEl) return;
+    videoEl.currentTime = line.start;
+    void videoEl.play().catch((e) => setVideoErr(String(e)));
   }
 
   // ── Validation ────────────────────────────────────────────────────────────
@@ -295,6 +535,10 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
       setSaving(false);
     }
   }
+
+  // ── Derived ───────────────────────────────────────────────────────────────
+
+  const existingTexts = useMemo(() => new Set(lines.map((l) => l.text.trim()).filter(Boolean)), [lines]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -423,6 +667,23 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
                 <option value="it">Italiano (Italian)</option>
               </select>
             </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Default line duration
+              </label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  step="0.5"
+                  min={0.5}
+                  max={30}
+                  value={defaultDurationSec}
+                  onChange={(e) => setDefaultDurationSec(Math.max(0.5, Number(e.target.value) || 4))}
+                  className="w-20 rounded-lg border border-slate-200 px-2 py-2 text-sm focus:border-blue-400 focus:outline-none"
+                />
+                <span className="text-xs text-slate-500">sec</span>
+              </div>
+            </div>
           </div>
 
           {/* Main editor — video + lines side by side */}
@@ -433,12 +694,20 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
                 <div className="overflow-hidden rounded-xl border border-slate-200 bg-black shadow-sm">
                   <video
                     ref={videoRef}
+                    key={media.downloadUrl}
                     src={media.downloadUrl}
-                    className="w-full"
+                    className="w-full block"
                     playsInline
-                    preload="metadata"
+                    preload="auto"
+                    controls
                   />
                 </div>
+
+                {videoErr && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+                    {videoErr}
+                  </div>
+                )}
 
                 <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
                   {/* Time + duration */}
@@ -453,11 +722,12 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
                   <input
                     type="range"
                     min={0}
-                    max={videoDuration || 100}
+                    max={videoDuration || 0.1}
                     step={0.05}
-                    value={videoTime}
+                    value={Math.min(videoTime, videoDuration || videoTime)}
                     onChange={(e) => seekTo(Number(e.target.value))}
-                    className="w-full accent-blue-600 cursor-pointer"
+                    disabled={!videoEl || videoDuration <= 0}
+                    className="w-full accent-blue-600 cursor-pointer disabled:opacity-50"
                   />
 
                   {/* Play + coarse seek */}
@@ -465,21 +735,24 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
                     <button
                       type="button"
                       onClick={() => seekBy(-5)}
-                      className="flex-1 rounded-lg border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                      disabled={!videoEl}
+                      className="flex-1 rounded-lg border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
                     >
                       ◀◀ 5s
                     </button>
                     <button
                       type="button"
                       onClick={togglePlay}
-                      className="flex-[2] rounded-lg bg-blue-600 py-2 text-sm font-bold text-white hover:bg-blue-700"
+                      disabled={!videoEl}
+                      className="flex-[2] rounded-lg bg-blue-600 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-40"
                     >
                       {videoPlaying ? "⏸ Pause" : "▶ Play"}
                     </button>
                     <button
                       type="button"
                       onClick={() => seekBy(5)}
-                      className="flex-1 rounded-lg border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                      disabled={!videoEl}
+                      className="flex-1 rounded-lg border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
                     >
                       5s ▶▶
                     </button>
@@ -492,7 +765,8 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
                         key={d}
                         type="button"
                         onClick={() => seekBy(d)}
-                        className="rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                        disabled={!videoEl}
+                        className="rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
                       >
                         {d > 0 ? `+${d}` : d}s
                       </button>
@@ -500,7 +774,7 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
                   </div>
 
                   <p className="text-xs text-slate-400 text-center">
-                    Use Set ⏱ buttons on each line to sync timings
+                    Use Set ⏱ on each line to sync timings
                   </p>
                 </div>
               </div>
@@ -508,6 +782,36 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
 
             {/* ─── Script lines editor ─── */}
             <div className="xl:col-span-3 space-y-4">
+              {/* Paste pool toggle + open */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPastePool((v) => !v)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition-colors",
+                    showPastePool
+                      ? "bg-slate-900 text-white hover:bg-slate-800"
+                      : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  📋 {showPastePool ? "Hide paste pool" : "Paste full script…"}
+                </button>
+                {lines.length > 0 && (
+                  <span className="ml-auto text-xs text-slate-500">{lines.length} line{lines.length !== 1 ? "s" : ""}</span>
+                )}
+              </div>
+
+              {/* Paste pool */}
+              {showPastePool && (
+                <PastePool
+                  videoTime={videoTime}
+                  existingTexts={existingTexts}
+                  defaultDurationSec={defaultDurationSec}
+                  onAddLine={addLineFromPaste}
+                  onBulkAdd={bulkAddSequentialLines}
+                />
+              )}
+
               {/* Validation errors */}
               {validationErrors.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -526,11 +830,11 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
               )}
 
               {/* Empty state */}
-              {lines.length === 0 && (
+              {lines.length === 0 && !showPastePool && (
                 <div className="rounded-xl border-2 border-dashed border-slate-200 p-10 text-center">
                   <p className="text-slate-400 font-medium">No lines yet</p>
                   <p className="text-sm text-slate-400 mt-1">
-                    Play the video to a timestamp, then click &ldquo;+ Add Line&rdquo; below.
+                    Click <strong>📋 Paste full script…</strong> to bulk-import, or play the video to a moment and click <strong>+ Add Line</strong>.
                   </p>
                 </div>
               )}
@@ -538,117 +842,129 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
               {/* Lines */}
               {lines.length > 0 && (
                 <div className="space-y-3">
-                  {lines.map((line, idx) => (
-                    <div
-                      key={line.id}
-                      onClick={() => setSelectedLineId(line.id)}
-                      className={cn(
-                        "cursor-pointer rounded-xl border p-4 shadow-sm transition-all",
-                        selectedLineId === line.id
-                          ? "border-blue-400 bg-blue-50 ring-2 ring-blue-200"
-                          : "border-slate-200 bg-white hover:border-slate-300",
-                      )}
-                    >
-                      {/* Line header */}
-                      <div className="mb-3 flex items-center gap-2">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">
-                          {idx + 1}
-                        </span>
-                        <span className="font-mono text-xs text-slate-400">
-                          {formatTime(line.start)} → {formatTime(line.end)}
-                        </span>
-                        <div className="ml-auto flex gap-1">
+                  {lines.map((line, idx) => {
+                    const isActiveInPreview =
+                      line.start <= videoTime && videoTime < line.end;
+                    return (
+                      <div
+                        key={line.id}
+                        onClick={() => setSelectedLineId(line.id)}
+                        className={cn(
+                          "cursor-pointer rounded-xl border p-4 shadow-sm transition-all",
+                          isActiveInPreview
+                            ? "border-amber-400 bg-amber-50 ring-2 ring-amber-200"
+                            : selectedLineId === line.id
+                              ? "border-blue-400 bg-blue-50 ring-2 ring-blue-200"
+                              : "border-slate-200 bg-white hover:border-slate-300",
+                        )}
+                      >
+                        {/* Line header */}
+                        <div className="mb-3 flex items-center gap-2">
+                          <span
+                            className={cn(
+                              "flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold",
+                              isActiveInPreview ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600",
+                            )}
+                          >
+                            {idx + 1}
+                          </span>
+                          <span className="font-mono text-xs text-slate-500">
+                            {formatTime(line.start)} → {formatTime(line.end)}
+                            <span className="ml-2 text-slate-400">({(line.end - line.start).toFixed(1)}s)</span>
+                          </span>
+                          <div className="ml-auto flex gap-1">
+                            <button
+                              type="button"
+                              title="Move up"
+                              disabled={idx === 0}
+                              onClick={(e) => { e.stopPropagation(); moveLine(line.id, "up"); }}
+                              className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 disabled:opacity-30"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              title="Move down"
+                              disabled={idx === lines.length - 1}
+                              onClick={(e) => { e.stopPropagation(); moveLine(line.id, "down"); }}
+                              className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 disabled:opacity-30"
+                            >
+                              ↓
+                            </button>
+                            <button
+                              type="button"
+                              title="Delete line"
+                              onClick={(e) => { e.stopPropagation(); deleteLine(line.id); }}
+                              className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Text */}
+                        <textarea
+                          rows={2}
+                          value={line.text}
+                          onChange={(e) => updateLine(line.id, { text: e.target.value })}
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder="Enter the guide text for this line…"
+                          className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                        />
+
+                        {/* Timing row */}
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold text-slate-500">Start</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              value={line.start}
+                              onChange={(e) => updateLine(line.id, { start: round2(Number(e.target.value)) })}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-20 rounded-lg border border-slate-200 px-2 py-1 font-mono text-xs focus:border-blue-400 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              title="Set start to current video time"
+                              onClick={(e) => { e.stopPropagation(); setStartNow(line.id); }}
+                              className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                            >
+                              Set ⏱
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold text-slate-500">End</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              value={line.end}
+                              onChange={(e) => updateLine(line.id, { end: round2(Number(e.target.value)) })}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-20 rounded-lg border border-slate-200 px-2 py-1 font-mono text-xs focus:border-blue-400 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              title="Set end to current video time"
+                              onClick={(e) => { e.stopPropagation(); setEndNow(line.id); }}
+                              className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                            >
+                              Set ⏱
+                            </button>
+                          </div>
                           <button
                             type="button"
-                            title="Move up"
-                            disabled={idx === 0}
-                            onClick={(e) => { e.stopPropagation(); moveLine(line.id, "up"); }}
-                            className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 disabled:opacity-30"
+                            onClick={(e) => { e.stopPropagation(); playLine(line); }}
+                            className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
                           >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            title="Move down"
-                            disabled={idx === lines.length - 1}
-                            onClick={(e) => { e.stopPropagation(); moveLine(line.id, "down"); }}
-                            className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 disabled:opacity-30"
-                          >
-                            ↓
-                          </button>
-                          <button
-                            type="button"
-                            title="Delete line"
-                            onClick={(e) => { e.stopPropagation(); deleteLine(line.id); }}
-                            className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600"
-                          >
-                            ✕
+                            ▶ Play
                           </button>
                         </div>
                       </div>
-
-                      {/* Text */}
-                      <textarea
-                        rows={2}
-                        value={line.text}
-                        onChange={(e) => updateLine(line.id, { text: e.target.value })}
-                        onClick={(e) => e.stopPropagation()}
-                        placeholder="Enter the guide text for this line…"
-                        className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                      />
-
-                      {/* Timing row */}
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-semibold text-slate-500">Start</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min={0}
-                            value={line.start}
-                            onChange={(e) => updateLine(line.id, { start: round2(Number(e.target.value)) })}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-20 rounded-lg border border-slate-200 px-2 py-1 font-mono text-xs focus:border-blue-400 focus:outline-none"
-                          />
-                          <button
-                            type="button"
-                            title="Set start to current video time"
-                            onClick={(e) => { e.stopPropagation(); setStartNow(line.id); }}
-                            className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-                          >
-                            Set ⏱
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-semibold text-slate-500">End</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min={0}
-                            value={line.end}
-                            onChange={(e) => updateLine(line.id, { end: round2(Number(e.target.value)) })}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-20 rounded-lg border border-slate-200 px-2 py-1 font-mono text-xs focus:border-blue-400 focus:outline-none"
-                          />
-                          <button
-                            type="button"
-                            title="Set end to current video time"
-                            onClick={(e) => { e.stopPropagation(); setEndNow(line.id); }}
-                            className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-                          >
-                            Set ⏱
-                          </button>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); playLine(line); }}
-                          className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                        >
-                          ▶ Play
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -659,7 +975,7 @@ export default function MediaDetailPage({ params }: { params: Promise<{ id: stri
                   onClick={addLine}
                   className="flex items-center gap-2 rounded-xl border-2 border-dashed border-blue-300 px-4 py-2.5 text-sm font-semibold text-blue-600 hover:border-blue-400 hover:bg-blue-50"
                 >
-                  + Add Line
+                  + Add Line at {formatTime(videoTime)}
                 </button>
                 <div className="ml-auto flex gap-3">
                   <button
