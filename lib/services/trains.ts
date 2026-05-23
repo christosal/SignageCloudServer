@@ -78,6 +78,42 @@ export async function sendWaitingScreen(trainId: string): Promise<void> {
   await updateDoc(doc(db, COL, trainId), { pendingCommand: "WAITING_SCREEN" });
 }
 
+/** Ask the Pi to scan nearby WiFi networks via nmcli and write results back. */
+export async function sendWifiScan(trainId: string): Promise<void> {
+  const db = getDb();
+  await updateDoc(doc(db, COL, trainId), {
+    pendingCommand: "WIFI_SCAN",
+    wifiCommandResult: {
+      type: "scan",
+      status: "running",
+      message: "Scan requested from Cloud Admin",
+    },
+  });
+}
+
+/** Ask the Pi to connect to a WiFi network. Password is cleared by the Pi after pickup. */
+export async function sendWifiConnect(
+  trainId: string,
+  ssid: string,
+  password: string,
+): Promise<void> {
+  const db = getDb();
+  await updateDoc(doc(db, COL, trainId), {
+    pendingCommand: "WIFI_CONNECT",
+    wifiCommand: {
+      ssid,
+      password,
+      requestedAt: serverTimestamp(),
+    },
+    wifiCommandResult: {
+      type: "connect",
+      status: "running",
+      ssid,
+      message: "Connect requested from Cloud Admin",
+    },
+  });
+}
+
 /** Broadcast a sync command to all online trains (used after media/playlist changes). */
 export async function sendSyncCommandToAllTrains(
   command: "SYNC_PLAYLIST" | "SYNC_ANNOUNCEMENTS",

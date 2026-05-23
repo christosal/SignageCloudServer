@@ -6,10 +6,12 @@ import {
   isTrainOnline,
   renameTrain,
   sendWaitingScreen,
+  sendWifiConnect,
+  sendWifiScan,
 } from "@/lib/services/trains";
 import { listPlaylists } from "@/lib/services/playlists";
 import { useTrains } from "@/lib/hooks/useTrains";
-import type { PlaylistDoc } from "@/lib/types";
+import type { PlaylistDoc, TrainDoc } from "@/lib/types";
 import { TrainPiMetricsGrid } from "@/components/train-pi-metrics";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
@@ -20,6 +22,8 @@ export default function TrainsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<Record<string, string>>({});
   const [waitingBusy, setWaitingBusy] = useState<Record<string, boolean>>({});
+  const [wifiBusy, setWifiBusy] = useState<Record<string, boolean>>({});
+  const [wifiForm, setWifiForm] = useState<Record<string, { ssid: string; password: string }>>({});
   const [confirmClear, setConfirmClear] = useState<{ trainId: string; trainName: string } | null>(null);
 
   const onlineCount = trains.filter((t) => isTrainOnline(t.lastHeartbeat)).length;
@@ -83,6 +87,41 @@ export default function TrainsPage() {
       setErr(e instanceof Error ? e.message : "Command failed");
     } finally {
       setWaitingBusy((b) => ({ ...b, [trainId]: false }));
+    }
+  }
+
+  async function onWifiScan(trainId: string) {
+    setWifiBusy((b) => ({ ...b, [trainId]: true }));
+    setErr(null);
+    try {
+      await sendWifiScan(trainId);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "WiFi scan command failed");
+    } finally {
+      setWifiBusy((b) => ({ ...b, [trainId]: false }));
+    }
+  }
+
+  async function onWifiConnect(trainId: string) {
+    const form = wifiForm[trainId];
+    const ssid = form?.ssid?.trim();
+    if (!ssid) {
+      setErr("Select or enter a WiFi network name first.");
+      return;
+    }
+    const ok = window.confirm(
+      `Connect this Pi to "${ssid}"?\n\nIf the password/network is wrong, the Pi may temporarily lose cloud access until it reconnects to a known WiFi.`,
+    );
+    if (!ok) return;
+    setWifiBusy((b) => ({ ...b, [trainId]: true }));
+    setErr(null);
+    try {
+      await sendWifiConnect(trainId, ssid, form?.password ?? "");
+      setWifiForm((prev) => ({ ...prev, [trainId]: { ssid, password: "" } }));
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "WiFi connect command failed");
+    } finally {
+      setWifiBusy((b) => ({ ...b, [trainId]: false }));
     }
   }
 
@@ -253,6 +292,15 @@ export default function TrainsPage() {
                 {/* Hardware metrics */}
                 <TrainPiMetricsGrid metrics={t.piMetrics} online={online} compact />
 
+                <WifiSettings
+                  train={t}
+                  busy={Boolean(wifiBusy[t.id])}
+                  form={wifiForm[t.id] ?? { ssid: "", password: "" }}
+                  onFormChange={(next) => setWifiForm((prev) => ({ ...prev, [t.id]: next }))}
+                  onScan={() => void onWifiScan(t.id)}
+                  onConnect={() => void onWifiConnect(t.id)}
+                />
+
                 {/* Management row */}
                 <div className="mt-4 flex flex-wrap items-center gap-6 border-t border-slate-100 pt-4 text-sm">
                   <div>
@@ -331,6 +379,167 @@ export default function TrainsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function WifiSettings({
+  train,
+  busy,
+  form,
+  onFormChange,
+  onScan,
+  onConnect,
+}: {
+  train: TrainDoc;
+  busy: boolean;
+  form: { ssid: string; password: string };
+  onFormChange: (next: { ssid: string; password: string }) => void;
+  onScan: () => void;
+  onConnect: () => void;
+}) {
+  const wifi = train.wifiStatus ?? null;
+  const networks = train.wifiScan?.networks ?? [];
+  const result = train.wifiCommandResult ?? null;
+  const running = result?.status === "running" || busy;
+  const scannedAt = train.wifiScan?.scannedAt
+    ? formatHeartbeat(train.wifiScan.scannedAt)
+    : null;
+
+  return (
+    <div className="mt-4 rounded-xl border border-sky-100 bg-sky-50/60 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+            WiFi Settings
+          </p>
+          <p className="mt-1 text-sm text-slate-700">
+            {wifi?.supported === false ? (
+              <span className="font-medium text-amber-700">
+                WiFi tools unavailable{wifi.error ? `: ${wifi.error}` : ""}
+              </span>
+            ) : wifi?.connected ? (
+              <>
+                Connected to <span className="font-semibold text-slate-900">{wifi.ssid}</span>
+                {wifi.signal !== null && wifi.signal !== undefined ? (
+                  <span className="text-slate-500"> · {wifi.signal}% signal</span>
+                ) : null}
+                {wifi.ip4 ? <span className="text-slate-500"> · {wifi.ip4}</span> : null}
+              </>
+            ) : (
+              <span className="font-medium text-slate-600">Not connected / unknown</span>
+            )}
+          </p>
+          {wifi?.device ? (
+            <p className="mt-0.5 text-xs text-slate-500">
+              Device: <code>{wifi.device}</code>
+              {wifi.security ? <> · Security: {wifi.security}</> : null}
+            </p>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          disabled={running}
+          onClick={onScan}
+          className={cn(
+            "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
+            running
+              ? "cursor-not-allowed border-slate-200 bg-white text-slate-400"
+              : "border-sky-300 bg-white text-sky-700 hover:bg-sky-100",
+          )}
+        >
+          {running && result?.type === "scan" ? "Scanning…" : "Scan WiFi"}
+        </button>
+      </div>
+
+      {result ? (
+        <p
+          className={cn(
+            "mt-3 rounded-lg px-3 py-2 text-xs",
+            result.status === "success"
+              ? "bg-emerald-50 text-emerald-700"
+              : result.status === "error"
+              ? "bg-red-50 text-red-700"
+              : result.status === "warning"
+              ? "bg-amber-50 text-amber-700"
+              : "bg-white text-slate-600",
+          )}
+        >
+          {result.message}
+        </p>
+      ) : null}
+
+      <div className="mt-3 grid gap-3 md:grid-cols-[1.2fr_1fr_auto]">
+        <div>
+          <label className="text-xs font-medium text-slate-500">Network name</label>
+          <input
+            list={`wifi-networks-${train.id}`}
+            value={form.ssid}
+            onChange={(e) => onFormChange({ ...form, ssid: e.target.value })}
+            placeholder="Select or type SSID"
+            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+          />
+          <datalist id={`wifi-networks-${train.id}`}>
+            {networks.map((n) => (
+              <option key={n.ssid} value={n.ssid}>
+                {n.signal ?? "?"}% {n.security ?? "open"}
+              </option>
+            ))}
+          </datalist>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500">Password</label>
+          <input
+            type="password"
+            value={form.password}
+            onChange={(e) => onFormChange({ ...form, password: e.target.value })}
+            placeholder="Leave empty for open WiFi"
+            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+          />
+        </div>
+        <div className="flex items-end">
+          <button
+            type="button"
+            disabled={running || !form.ssid.trim()}
+            onClick={onConnect}
+            className={cn(
+              "w-full rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors md:w-auto",
+              running || !form.ssid.trim()
+                ? "cursor-not-allowed bg-slate-300"
+                : "bg-sky-700 hover:bg-sky-800",
+            )}
+          >
+            {running && result?.type === "connect" ? "Connecting…" : "Connect"}
+          </button>
+        </div>
+      </div>
+
+      {networks.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {networks.slice(0, 8).map((n) => (
+            <button
+              type="button"
+              key={n.ssid}
+              onClick={() => onFormChange({ ...form, ssid: n.ssid })}
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-xs font-medium",
+                n.inUse
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+              )}
+            >
+              {n.inUse ? "✓ " : ""}
+              {n.ssid}
+              {n.signal !== null && n.signal !== undefined ? ` · ${n.signal}%` : ""}
+            </button>
+          ))}
+          {scannedAt ? <span className="self-center text-xs text-slate-400">Scanned {scannedAt}</span> : null}
+        </div>
+      ) : null}
+
+      <p className="mt-3 text-xs text-slate-500">
+        Password is sent only as a temporary command. The Pi clears it from Firestore after pickup.
+      </p>
     </div>
   );
 }

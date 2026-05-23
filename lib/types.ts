@@ -80,6 +80,39 @@ export interface TrainPiMetrics {
   netTxBytes: number | null;
 }
 
+export interface TrainWifiStatus {
+  supported: boolean;
+  connected: boolean;
+  ssid: string | null;
+  signal: number | null;
+  security: string | null;
+  device: string | null;
+  ip4: string | null;
+  updatedAt: string;
+  error?: string;
+}
+
+export interface TrainWifiNetwork {
+  ssid: string;
+  signal: number | null;
+  security: string | null;
+  inUse: boolean;
+}
+
+export interface TrainWifiScan {
+  networks: TrainWifiNetwork[];
+  scannedAt?: Timestamp;
+}
+
+export interface TrainWifiCommandResult {
+  type: "scan" | "connect";
+  status: "running" | "success" | "warning" | "error";
+  ssid?: string | null;
+  message: string;
+  startedAt?: Timestamp;
+  finishedAt?: Timestamp;
+}
+
 export interface TrainDoc {
   id: string;
   name: string;
@@ -91,9 +124,15 @@ export interface TrainDoc {
   connectedTvs: ConnectedTv[];
   createdAt: Timestamp;
   /** Set by cloud admin; Pi watches and executes then clears */
-  pendingCommand?: "WAITING_SCREEN" | "SYNC_PLAYLIST" | "SYNC_ANNOUNCEMENTS" | null;
+  pendingCommand?: "WAITING_SCREEN" | "SYNC_PLAYLIST" | "SYNC_ANNOUNCEMENTS" | "WIFI_SCAN" | "WIFI_CONNECT" | null;
   /** Written by Pi: what is currently shown on the TVs */
   currentState?: TrainCurrentState | null;
   /** Written by Pi heartbeat: CPU, temp, RAM, disk, network */
   piMetrics?: TrainPiMetrics | null;
+  /** Written by Pi heartbeat: current WiFi connection status */
+  wifiStatus?: TrainWifiStatus | null;
+  /** Written by Pi after a WiFi scan command */
+  wifiScan?: TrainWifiScan | null;
+  /** Written by Pi after/while executing WiFi commands */
+  wifiCommandResult?: TrainWifiCommandResult | null;
 }
