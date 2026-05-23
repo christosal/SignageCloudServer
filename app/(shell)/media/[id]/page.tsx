@@ -51,47 +51,62 @@ interface KaraokeDisplayProps {
   visibleUpcoming?: number;
 }
 
-function KaraokeDisplay({ lines, currentTime, visibleUpcoming = 3 }: KaraokeDisplayProps) {
+function KaraokeDisplay({ lines, currentTime, visibleUpcoming = 4 }: KaraokeDisplayProps) {
   const sorted = useMemo(() => [...lines].sort((a, b) => a.start - b.start), [lines]);
   const activeIdx = sorted.findIndex((l) => l.start <= currentTime && currentTime < l.end);
-  const prevLine = activeIdx > 0 ? sorted[activeIdx - 1] ?? null : null;
-  const currLine = activeIdx >= 0 ? sorted[activeIdx] ?? null : null;
-  const upcomingLines =
-    activeIdx >= 0
-      ? sorted.slice(activeIdx + 1, activeIdx + 1 + visibleUpcoming)
-      : sorted.filter((l) => l.start > currentTime).slice(0, visibleUpcoming);
-  const nextLine = sorted.find((l) => l.start > currentTime) ?? null;
+  const firstUpcomingIdx = useMemo(
+    () => (activeIdx >= 0 ? -1 : sorted.findIndex((l) => l.start > currentTime)),
+    [sorted, currentTime, activeIdx],
+  );
+  const hasActive = activeIdx >= 0;
+  const anchorIdx = hasActive ? activeIdx : firstUpcomingIdx;
+  const atEnd = sorted.length > 0 && anchorIdx < 0;
 
-  const showUpcoming = currLine
-    ? upcomingLines
-    : nextLine
-      ? [nextLine, ...upcomingLines.slice(0, visibleUpcoming - 1)]
-      : [];
-  const atEnd = sorted.length > 0 && !prevLine && !currLine && !nextLine;
+  // Windowed render: 1 line before, up to `visibleUpcoming` after the anchor.
+  // Stable React keys (one per ScriptLine.id) mean the same DOM nodes stay
+  // mounted across state changes — CSS transitions then animate the
+  // per-line `data-state` attribute smoothly with no flicker / duplicates.
+  let firstIdx = -1;
+  let lastIdx = -1;
+  if (anchorIdx >= 0) {
+    firstIdx = Math.max(0, anchorIdx - 1);
+    lastIdx = Math.min(sorted.length - 1, anchorIdx + visibleUpcoming);
+  }
+  const visibleLines = firstIdx >= 0 ? sorted.slice(firstIdx, lastIdx + 1) : [];
 
   return (
-    <div className="rounded-2xl bg-slate-900 px-6 py-5 space-y-1.5 min-h-36">
-      {prevLine && (
-        <p className="text-sm text-slate-500 leading-snug">{prevLine.text}</p>
+    <div className="rounded-2xl bg-slate-900 px-6 py-5 min-h-36 flex flex-col gap-1.5 overflow-hidden">
+      {!hasActive && !atEnd && sorted.length > 0 && (
+        <p className="text-xs uppercase tracking-wider text-slate-500 italic">Coming next…</p>
       )}
 
-      {currLine ? (
-        <p className="text-2xl font-bold text-amber-400 leading-tight py-1">{currLine.text}</p>
-      ) : nextLine ? (
-        <p className="text-slate-500 italic text-sm">Coming next…</p>
-      ) : lines.length > 0 && !atEnd ? (
-        <p className="text-slate-600 italic text-sm">—</p>
-      ) : null}
-
-      {showUpcoming.map((l, i) => (
-        <p
-          key={l.id}
-          className="text-white leading-snug"
-          style={{ fontSize: i === 0 ? "1rem" : "0.88rem", opacity: i === 0 ? 0.9 : 0.65 }}
-        >
-          {l.text}
-        </p>
-      ))}
+      {visibleLines.map((line) => {
+        const realIdx = sorted.indexOf(line);
+        let state: 'past' | 'current' | 'next-up' | 'upcoming';
+        if (hasActive) {
+          if (realIdx < activeIdx) state = 'past';
+          else if (realIdx === activeIdx) state = 'current';
+          else state = 'upcoming';
+        } else {
+          state = realIdx === anchorIdx ? 'next-up' : 'upcoming';
+        }
+        const cls =
+          state === 'current'
+            ? 'text-2xl font-bold text-amber-400 leading-tight py-1'
+            : state === 'past'
+              ? 'text-xs text-slate-500 leading-snug opacity-50'
+              : state === 'next-up'
+                ? 'text-base font-semibold text-amber-200 italic leading-snug'
+                : 'text-sm text-slate-200 leading-snug opacity-70';
+        return (
+          <p
+            key={line.id}
+            className={`${cls} transition-all duration-500 ease-out`}
+          >
+            {line.text}
+          </p>
+        );
+      })}
 
       {atEnd && <p className="text-slate-500 italic text-sm">End of script</p>}
       {lines.length === 0 && (
