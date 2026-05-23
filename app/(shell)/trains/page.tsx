@@ -398,6 +398,7 @@ function WifiSettings({
   onScan: () => void;
   onConnect: () => void;
 }) {
+  const [networkPickerOpen, setNetworkPickerOpen] = useState(false);
   const wifi = train.wifiStatus ?? null;
   const networks = train.wifiScan?.networks ?? [];
   const result = train.wifiCommandResult ?? null;
@@ -440,7 +441,10 @@ function WifiSettings({
         <button
           type="button"
           disabled={running}
-          onClick={onScan}
+          onClick={() => {
+            setNetworkPickerOpen(true);
+            onScan();
+          }}
           className={cn(
             "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
             running
@@ -540,6 +544,108 @@ function WifiSettings({
       <p className="mt-3 text-xs text-slate-500">
         Password is sent only as a temporary command. The Pi clears it from Firestore after pickup.
       </p>
+
+      {networkPickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => setNetworkPickerOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Select WiFi network</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Choose an SSID for <span className="font-medium text-slate-700">{train.name}</span>.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNetworkPickerOpen(false)}
+                className="rounded-lg px-2 py-1 text-sm font-semibold text-slate-500 hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4">
+              {running && result?.type === "scan" ? (
+                <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-5 text-center text-sm text-sky-700">
+                  Scanning nearby WiFi networks…
+                </div>
+              ) : networks.length === 0 ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
+                  No scan results yet. Press <span className="font-semibold">Scan again</span>.
+                </div>
+              ) : (
+                <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                  {networks.map((n) => (
+                    <button
+                      type="button"
+                      key={`${n.ssid}:${n.bssid ?? ""}`}
+                      onClick={() => {
+                        onFormChange({ ...form, ssid: n.ssid });
+                        setNetworkPickerOpen(false);
+                      }}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
+                        n.inUse
+                          ? "border-emerald-300 bg-emerald-50"
+                          : "border-slate-200 bg-white hover:bg-sky-50",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-900">
+                          {n.inUse ? "✓ " : ""}
+                          {n.ssid}
+                        </p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {n.security ?? "Open network"}
+                          {n.bssid ? <> · {n.bssid}</> : null}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-slate-700">
+                          {n.signal ?? "?"}%
+                        </p>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-400">signal</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-slate-400">
+                {scannedAt ? `Last scan: ${scannedAt}` : "No scan yet"}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNetworkPickerOpen(false)}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={onScan}
+                  className={cn(
+                    "rounded-lg px-4 py-2 text-sm font-semibold text-white",
+                    running ? "cursor-not-allowed bg-slate-300" : "bg-sky-700 hover:bg-sky-800",
+                  )}
+                >
+                  Scan again
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
