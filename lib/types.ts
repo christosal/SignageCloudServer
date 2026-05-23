@@ -94,6 +94,7 @@ export interface TrainWifiStatus {
 
 export interface TrainWifiNetwork {
   ssid: string;
+  bssid?: string | null;
   signal: number | null;
   security: string | null;
   inUse: boolean;
