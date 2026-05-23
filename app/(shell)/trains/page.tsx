@@ -402,7 +402,20 @@ function WifiSettings({
   const wifi = train.wifiStatus ?? null;
   const networks = train.wifiScan?.networks ?? [];
   const result = train.wifiCommandResult ?? null;
-  const running = result?.status === "running" || busy;
+  const connectSucceededByStatus =
+    result?.type === "connect" &&
+    result.status === "running" &&
+    Boolean(result.ssid) &&
+    wifi?.connected === true &&
+    wifi.ssid === result.ssid;
+  const effectiveResult = connectSucceededByStatus
+    ? {
+        ...result,
+        status: "success" as const,
+        message: `Connected to ${wifi?.ssid ?? result.ssid}`,
+      }
+    : result;
+  const running = (effectiveResult?.status === "running" || busy) && !connectSucceededByStatus;
   const scannedAt = train.wifiScan?.scannedAt
     ? formatHeartbeat(train.wifiScan.scannedAt)
     : null;
@@ -456,20 +469,20 @@ function WifiSettings({
         </button>
       </div>
 
-      {result ? (
+      {effectiveResult ? (
         <p
           className={cn(
             "mt-3 rounded-lg px-3 py-2 text-xs",
-            result.status === "success"
+            effectiveResult.status === "success"
               ? "bg-emerald-50 text-emerald-700"
-              : result.status === "error"
+              : effectiveResult.status === "error"
               ? "bg-red-50 text-red-700"
-              : result.status === "warning"
+              : effectiveResult.status === "warning"
               ? "bg-amber-50 text-amber-700"
               : "bg-white text-slate-600",
           )}
         >
-          {result.message}
+          {effectiveResult.message}
         </p>
       ) : null}
 
