@@ -93,7 +93,7 @@ export default function MediaPage() {
   const [items, setItems] = useState<MediaDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<MediaCategory>("videos");
   const [subcategory, setSubcategory] = useState("");
@@ -164,34 +164,60 @@ export default function MediaPage() {
     return () => { c = true; };
   }, []);
 
-  const detected = file ? detectMediaType(file) : null;
+  const primaryFile = files[0] ?? null;
+  const detected = primaryFile ? detectMediaType(primaryFile) : null;
+  const unsupportedCount = files.filter((f) => !detectMediaType(f)).length;
 
-  function handleFile(f: File) {
-    setFile(f);
-    if (!title) setTitle(f.name.replace(/\.[^.]+$/, ""));
+  function handleFiles(nextFiles: FileList | File[]) {
+    const picked = Array.from(nextFiles);
+    setFiles(picked);
+    if (picked.length === 1 && !title && picked[0]) {
+      setTitle(picked[0].name.replace(/\.[^.]+$/, ""));
+    }
   }
 
   async function onUpload(e: React.FormEvent) {
     e.preventDefault();
-    if (!file) { setErr("Choose a file"); return; }
+    if (files.length === 0) { setErr("Choose at least one file"); return; }
+    if (unsupportedCount > 0) { setErr("All files must be videos or images"); return; }
+    if (category === "learn_greek_word" && files.some((f) => detectMediaType(f) !== "video")) {
+      setErr("Learn a Greek Word accepts video files only");
+      return;
+    }
     setUploadBusy(true);
     setUploadProgress(0);
     setErr(null);
     try {
-      // For video files, read the actual duration from the browser before uploading.
-      // This is used server-side for playlist sync timing.
-      let durationSeconds: number | null = detected === "image" ? imageDuration : null;
-      if (detected === "video") {
-        durationSeconds = await readVideoDuration(file);
-      }
+      let completed = 0;
+      for (const currentFile of files) {
+        const currentType = detectMediaType(currentFile);
+        if (!currentType) throw new Error(`Unsupported file: ${currentFile.name}`);
 
-      // Simulate progress since firebase uploadBytes doesn't expose it easily
-      const ticker = setInterval(() => setUploadProgress((p) => Math.min((p ?? 0) + 10, 90)), 200);
-      await uploadMedia({ file, title: title || file.name, category, subcategory: category === "announcements" ? subcategory.trim() || undefined : undefined, durationSeconds });
-      clearInterval(ticker);
-      setUploadProgress(100);
+        // For video files, read the actual duration from the browser before uploading.
+        // This is used server-side for playlist sync timing.
+        let durationSeconds: number | null = currentType === "image" ? imageDuration : null;
+        if (currentType === "video") {
+          durationSeconds = await readVideoDuration(currentFile);
+        }
+
+        const displayTitle = files.length === 1
+          ? title || currentFile.name
+          : currentFile.name.replace(/\.[^.]+$/, "");
+        await uploadMedia({
+          file: currentFile,
+          title: displayTitle,
+          category,
+          subcategory: category === "announcements" ? subcategory.trim() || undefined : undefined,
+          durationSeconds,
+        });
+        completed++;
+        setUploadProgress(Math.round((completed / files.length) * 100));
+      }
+      if (category === "learn_greek_word") {
+        await sendSyncCommandToAllTrains("SYNC_PLAYLIST").catch(() => null);
+      }
       setTimeout(() => setUploadProgress(null), 600);
-      setFile(null);
+      setFiles([]);
       setTitle("");
       setSubcategory("");
       if (fileRef.current) fileRef.current.value = "";
@@ -275,28 +301,30 @@ export default function MediaPage() {
             onDrop={(e) => {
               e.preventDefault();
               setDragOver(false);
-              const f = e.dataTransfer.files?.[0];
-              if (f) handleFile(f);
+              const dropped = e.dataTransfer.files;
+              if (dropped?.length) handleFiles(dropped);
             }}
           >
-            <input ref={fileRef} type="file" accept="video/*,image/*" className="sr-only"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-            {file ? (
+            <input ref={fileRef} type="file" accept="video/*,image/*" multiple className="sr-only"
+              onChange={(e) => { const picked = e.target.files; if (picked?.length) handleFiles(picked); }} />
+            {files.length > 0 ? (
               <div className="text-center">
-                <p className="text-sm font-medium text-slate-900">{file.name}</p>
+                <p className="text-sm font-medium text-slate-900">
+                  {files.length === 1 ? primaryFile?.name : `${files.length} files selected`}
+                </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {(file.size / 1024 / 1024).toFixed(1)} MB
+                  {(files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024).toFixed(1)} MB total
                   {detected && <span className={cn("ml-2 rounded-full px-2 py-0.5 font-semibold", TYPE_BADGE[detected] ?? "bg-slate-100 text-slate-600")}>{detected}</span>}
-                  {!detected && <span className="ml-2 text-amber-600">unsupported type</span>}
+                  {unsupportedCount > 0 && <span className="ml-2 text-amber-600">{unsupportedCount} unsupported</span>}
                 </p>
                 <button type="button" className="mt-2 text-xs text-brand-700 hover:underline"
-                  onClick={(e) => { e.stopPropagation(); setFile(null); setTitle(""); }}>Remove</button>
+                  onClick={(e) => { e.stopPropagation(); setFiles([]); setTitle(""); }}>Remove</button>
               </div>
             ) : (
               <>
                 <p className="text-2xl">📁</p>
-                <p className="mt-2 text-sm font-medium text-slate-700">Drop a file or click to browse</p>
-                <p className="text-xs text-slate-400">Video or image</p>
+                <p className="mt-2 text-sm font-medium text-slate-700">Drop files or click to browse</p>
+                <p className="text-xs text-slate-400">Bulk video/image upload supported</p>
               </>
             )}
           </div>
@@ -310,7 +338,8 @@ export default function MediaPage() {
           <div className="flex flex-wrap items-end gap-4">
             <div className="min-w-[180px] flex-1">
               <label className="block text-sm font-medium text-slate-700">Title</label>
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Display name"
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={files.length > 1 ? "Bulk upload uses filenames" : "Display name"}
+                disabled={files.length > 1}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500" />
             </div>
             <div className="min-w-[140px]">
@@ -333,17 +362,17 @@ export default function MediaPage() {
                 </datalist>
               </div>
             )}
-            {detected === "image" && (
+            {files.length <= 1 && detected === "image" && (
               <div className="w-28">
                 <label className="block text-sm font-medium text-slate-700">Duration (s)</label>
                 <input type="number" min={1} value={imageDuration} onChange={(e) => setImageDuration(Number(e.target.value) || 6)}
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500" />
               </div>
             )}
-            <button type="submit" disabled={uploadBusy || !file || !detected}
+            <button type="submit" disabled={uploadBusy || files.length === 0 || unsupportedCount > 0}
               className={cn("rounded-lg px-5 py-2 text-sm font-semibold text-white transition-colors",
-                uploadBusy || !file || !detected ? "bg-slate-400 cursor-not-allowed" : "bg-brand-700 hover:bg-brand-900")}>
-              {uploadBusy ? "Uploading…" : "Upload"}
+                uploadBusy || files.length === 0 || unsupportedCount > 0 ? "bg-slate-400 cursor-not-allowed" : "bg-brand-700 hover:bg-brand-900")}>
+              {uploadBusy ? "Uploading…" : files.length > 1 ? `Upload ${files.length} files` : "Upload"}
             </button>
           </div>
         </form>

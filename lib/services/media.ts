@@ -67,7 +67,7 @@ export async function uploadMedia(params: {
   const downloadUrl = await getDownloadURL(storageRef);
 
   const duration =
-    mediaType === "image" ? durationSeconds ?? 6 : null;
+    mediaType === "image" ? durationSeconds ?? 6 : durationSeconds ?? null;
 
   const docData: Record<string, unknown> = {
     title: title.trim() || safeName,

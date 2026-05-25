@@ -42,9 +42,11 @@ export interface MediaDoc {
 export interface PlaylistItem {
   mediaId: string;
   title: string;
-  mediaType: MediaType;
-  downloadUrl: string;
+  mediaType: MediaType | "template";
+  downloadUrl?: string;
   duration: number | null;
+  kind?: "media" | "category_random";
+  category?: string;
 }
 
 export interface PlaylistDoc {

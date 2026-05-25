@@ -1,5 +1,6 @@
 "use client";
 
+import { LEARN_GREEK_WORD_CATEGORY } from "@/lib/constants";
 import { listMedia } from "@/lib/services/media";
 import { getPlaylist, savePlaylist } from "@/lib/services/playlists";
 import type { MediaDoc, PlaylistItem } from "@/lib/types";
@@ -45,6 +46,18 @@ export default function EditPlaylistPage() {
     if (items.some((i) => i.mediaId === m.id)) return;
     setItems((prev) => [...prev, {
       mediaId: m.id, title: m.title, mediaType: m.mediaType, downloadUrl: m.downloadUrl, duration: m.duration,
+    }]);
+  }
+
+  function addLearnGreekWordSlot() {
+    setItems((prev) => [...prev, {
+      mediaId: `template:${LEARN_GREEK_WORD_CATEGORY}`,
+      title: "Learn a Greek Word",
+      mediaType: "template",
+      downloadUrl: "",
+      duration: null,
+      kind: "category_random",
+      category: LEARN_GREEK_WORD_CATEGORY,
     }]);
   }
 
@@ -178,6 +191,13 @@ export default function EditPlaylistPage() {
             >
               {items.some((i) => i.mediaId === pickId) ? "Already added" : "Add to playlist"}
             </button>
+            <button
+              type="button"
+              onClick={addLearnGreekWordSlot}
+              className="rounded-lg border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100"
+            >
+              + Learn a Greek Word slot
+            </button>
           </div>
         )}
       </div>
@@ -198,10 +218,15 @@ export default function EditPlaylistPage() {
           <ul className="divide-y divide-slate-100">
             {items.map((it, index) => {
               const m = mediaLib.find((x) => x.id === it.mediaId);
+              const isTemplate = it.kind === "category_random";
               return (
                 <li key={`${it.mediaId}-${index}`} className="flex items-center gap-3 px-5 py-3">
                   <span className="w-6 shrink-0 text-center text-xs text-slate-400">{index + 1}</span>
-                  {m && (
+                  {isTemplate ? (
+                    <div className="flex h-10 w-14 shrink-0 items-center justify-center rounded-md bg-sky-100 text-xs font-bold text-sky-700">
+                      LGW
+                    </div>
+                  ) : m && (
                     <div className="h-10 w-14 shrink-0 overflow-hidden rounded-md bg-slate-100">
                       {m.mediaType === "image" ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -214,7 +239,9 @@ export default function EditPlaylistPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-slate-900">{it.title}</p>
                     <p className="text-xs text-slate-500">
-                      {it.mediaType}{it.mediaType === "image" && it.duration != null ? ` · ${it.duration}s` : ""}
+                      {isTemplate
+                        ? "Random video from Learn a Greek Word"
+                        : `${it.mediaType}${it.mediaType === "image" && it.duration != null ? ` · ${it.duration}s` : ""}`}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
